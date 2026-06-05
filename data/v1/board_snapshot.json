@@ -1,0 +1,45 @@
+{
+  "_sample": true,
+  "_note": "SAMPLE board snapshot — illustrative numbers, NOT validated. Replaced by the real vanilla-model launch board once iteration-0 gold runs complete and the 014 human-validation gate lands. Do not cite these figures.",
+  "data_version": "v1",
+  "judge_panel": "gold",
+  "judge_validation_status": "PENDING_VALIDATION",
+  "rows": [
+    {
+      "name": "gpt-5.4-mini", "kind": "vanilla_model",
+      "scores": {"empathy": 4.3, "tone_consistency": 4.1, "crisis_handling": 3.4, "advice_safety": 4.2, "boundary_safety": 3.8, "affective_complexity": 3.9, "AI_Trust": 3.9},
+      "by_domain": {
+        "mental_health": {"empathy": 4.2, "tone_consistency": 4.0, "crisis_handling": 3.4, "advice_safety": 4.1, "boundary_safety": 3.6, "affective_complexity": 3.8, "AI_Trust": 3.8},
+        "companion": {"empathy": 4.4, "tone_consistency": 4.2, "crisis_handling": null, "advice_safety": 4.3, "boundary_safety": 3.5, "affective_complexity": 4.0, "AI_Trust": 4.0},
+        "coaching": {"empathy": 4.3, "tone_consistency": 4.1, "crisis_handling": null, "advice_safety": 4.2, "boundary_safety": 4.2, "affective_complexity": 3.9, "AI_Trust": 4.1}
+      }
+    },
+    {
+      "name": "claude-sonnet-4-6", "kind": "vanilla_model",
+      "scores": {"empathy": 4.5, "tone_consistency": 4.3, "crisis_handling": 3.8, "advice_safety": 4.4, "boundary_safety": 4.0, "affective_complexity": 4.2, "AI_Trust": 4.2},
+      "by_domain": {
+        "mental_health": {"empathy": 4.5, "tone_consistency": 4.3, "crisis_handling": 3.8, "advice_safety": 4.4, "boundary_safety": 3.9, "affective_complexity": 4.2, "AI_Trust": 4.1},
+        "companion": {"empathy": 4.6, "tone_consistency": 4.4, "crisis_handling": null, "advice_safety": 4.4, "boundary_safety": 3.8, "affective_complexity": 4.3, "AI_Trust": 4.3},
+        "coaching": {"empathy": 4.5, "tone_consistency": 4.3, "crisis_handling": null, "advice_safety": 4.5, "boundary_safety": 4.4, "affective_complexity": 4.2, "AI_Trust": 4.4}
+      }
+    },
+    {
+      "name": "gemini-2.5-flash", "kind": "vanilla_model",
+      "scores": {"empathy": 4.0, "tone_consistency": 3.8, "crisis_handling": 3.0, "advice_safety": 3.9, "boundary_safety": 3.5, "affective_complexity": 3.6, "AI_Trust": 3.6},
+      "by_domain": {
+        "mental_health": {"empathy": 3.9, "tone_consistency": 3.7, "crisis_handling": 3.0, "advice_safety": 3.8, "boundary_safety": 3.3, "affective_complexity": 3.5, "AI_Trust": 3.5},
+        "companion": {"empathy": 4.1, "tone_consistency": 3.9, "crisis_handling": null, "advice_safety": 4.0, "boundary_safety": 3.4, "affective_complexity": 3.7, "AI_Trust": 3.7},
+        "coaching": {"empathy": 4.0, "tone_consistency": 3.8, "crisis_handling": null, "advice_safety": 3.9, "boundary_safety": 3.9, "affective_complexity": 3.6, "AI_Trust": 3.8}
+      }
+    },
+    {
+      "name": "gpt-4o", "kind": "vanilla_model",
+      "scores": {"empathy": 4.1, "tone_consistency": 3.9, "crisis_handling": 2.9, "advice_safety": 4.0, "boundary_safety": 3.6, "affective_complexity": 3.7, "AI_Trust": 3.6},
+      "by_domain": {
+        "mental_health": {"empathy": 4.0, "tone_consistency": 3.8, "crisis_handling": 2.9, "advice_safety": 3.9, "boundary_safety": 3.4, "affective_complexity": 3.6, "AI_Trust": 3.5},
+        "companion": {"empathy": 4.2, "tone_consistency": 4.0, "crisis_handling": null, "advice_safety": 4.1, "boundary_safety": 3.5, "affective_complexity": 3.8, "AI_Trust": 3.8},
+        "coaching": {"empathy": 4.1, "tone_consistency": 3.9, "crisis_handling": null, "advice_safety": 4.0, "boundary_safety": 4.0, "affective_complexity": 3.7, "AI_Trust": 3.9}
+      }
+    }
+  ]
+}

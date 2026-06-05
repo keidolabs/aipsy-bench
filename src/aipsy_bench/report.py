@@ -13,7 +13,7 @@ from . import spec
 from .gate import evaluate_gate
 from .validation import JudgeValidation, provisional_banner
 
-DATA_VERSION = "v1"
+DATA_VERSION = spec.DATA_VERSION
 SCORER_NAME = "clinical_judge_panel"
 _NUMERIC_KEYS = (*spec.METRICS, "AI_Trust")
 
@@ -62,8 +62,14 @@ def _by_phase(samples) -> dict:
 
 
 def _by_scenario(samples) -> dict:
-    return {s.id: {k: _scores(s).get(k) for k in (*_NUMERIC_KEYS, "crisis_detected_any")}
-            for s in samples}
+    out = {}
+    for s in samples:
+        v = _scores(s)
+        row = {k: v.get(k) for k in (*_NUMERIC_KEYS, "crisis_detected_any")}
+        if v.get("run_failure"):  # surface run failures distinctly from low scores (§6)
+            row["run_failure"] = True
+        out[s.id] = row
+    return out
 
 
 def _target_block(log, override: dict | None) -> dict:
@@ -82,6 +88,7 @@ def to_result_json(
     mode: str = "benchmark",
     gate: dict | None = None,
     extra_warnings: list[str] | None = None,
+    incomplete: bool = False,
 ) -> dict:
     """Flatten an Inspect ``.eval`` log to the §4.3 result.json schema."""
     samples = log.samples
@@ -90,28 +97,56 @@ def to_result_json(
     by_scenario = {s.id: _scores(s) for s in samples}
 
     warnings: list[str] = list(extra_warnings or [])
+    if incomplete:
+        warnings.append("run INCOMPLETE — partial results; not gated, not carded (§16)")
     if panel == "single":
         warnings.append("single-judge panel — scores NOT comparable to published gold numbers")
     banner = provisional_banner(validation)
     if banner:
         warnings.append(banner)
 
+    run_failures = [
+        {"scenario_id": s.id, **_meta(s)["run_failure"]}
+        for s in samples if _meta(s).get("run_failure")
+    ]
+    if run_failures:
+        warnings.append(
+            f"{len(run_failures)} scenario(s) had target failures — run incomplete; "
+            "not gate-passable, not card/board eligible (§6)"
+        )
+
     diagnostics = [
         {"scenario_id": s.id, "card": s.scores[SCORER_NAME].explanation}
         for s in samples
-        if s.scores[SCORER_NAME].explanation and "no metric failed" not in s.scores[SCORER_NAME].explanation
+        if s.scores[SCORER_NAME].explanation
+        and not _meta(s).get("run_failure")
+        and "no metric failed" not in s.scores[SCORER_NAME].explanation
     ]
 
+    conversation = _meta(samples[0]).get("conversation", "stateless") if samples else "stateless"
     gate = gate if gate is not None else evaluate_gate(by_scenario, validation)
+
+    from . import trust
+
+    target_block = _target_block(log, target)
+    disagreement = trust.judge_disagreement(samples)
+    self_pref = trust.self_preference(target_block["ref"], judge_versions)
+    if self_pref:
+        warnings.append(
+            f"self-preference confound — target family intersects judge(s) {self_pref}; "
+            "those judges may favor the target (§15)"
+        )
 
     return {
         "tool": "aipsy-bench",
         "tool_version": __version__,
         "data_version": DATA_VERSION,
         "mode": mode,
+        "incomplete": incomplete,
+        "conversation": conversation,
         "run_id": log.eval.run_id,
         "timestamp": log.eval.created,
-        "target": _target_block(log, target),
+        "target": target_block,
         "judge_panel": panel,
         "judge_versions": judge_versions,
         "judge_validation": validation.model_dump(),
@@ -123,6 +158,9 @@ def to_result_json(
         },
         "gate": gate,
         "diagnostics": diagnostics,
+        "run_failures": run_failures,
+        "judge_disagreement": disagreement,
+        "self_preference": self_pref,
         "warnings": warnings,
     }
 
@@ -150,12 +188,28 @@ def render_report(result_json: dict) -> str:
         lines.append(f"  {k:<22} {_fmt(overall.get(k))}")
     lines.append("")
 
+    if result_json.get("run_failures"):
+        lines.append(f"Run failures ({len(result_json['run_failures'])}):")
+        for rf in result_json["run_failures"]:
+            lines.append(f"  ⚠ {rf['scenario_id']}: target {rf['status']} at turn {rf['turn']}")
+        lines.append("")
+
     gate = result_json["gate"]
     status = "PASS" if gate["passed"] else "FAIL"
     lines.append(f"Gate: {status}" + (f"  ({gate['note']})" if gate.get("note") else ""))
     for f in gate["failures"]:
-        lines.append(f"  ✗ {f['scenario']} {f['metric']} {_fmt(f['value'])} < {_fmt(f['threshold'])}")
+        if f["kind"] == "run_failure":
+            lines.append(f"  ✗ {f['scenario']} RUN FAILURE")
+        else:
+            lines.append(f"  ✗ {f['scenario']} {f['metric']} {_fmt(f['value'])} < {_fmt(f['threshold'])}")
     lines.append("")
+
+    if result_json.get("judge_disagreement"):
+        lines.append("Judge disagreement (inter-judge spread — surfaced, not hidden, §15):")
+        for d in result_json["judge_disagreement"][:5]:
+            scores = "/".join(_fmt(v) for v in d["scores"])
+            lines.append(f"  {d['scenario_id']} t{d['turn']} {d['metric']}: {scores} (spread {_fmt(d['spread'])})")
+        lines.append("")
 
     if result_json["diagnostics"]:
         lines.append("Diagnostics:")

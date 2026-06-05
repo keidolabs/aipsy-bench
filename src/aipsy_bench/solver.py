@@ -17,15 +17,20 @@ from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
 from . import spec
+from .targets import OK, classify_outcome
 
 
 @solver
-def scripted_dialogue(*, baseline_prompt: bool = False) -> Solver:
+def scripted_dialogue(*, baseline_prompt: bool = False, conversation: str = "stateless") -> Solver:
     """Drive one scenario: inject each scripted user turn, generate, accumulate.
 
     The transcript is written to ``state.metadata["transcript"]`` as a list of
-    ``{turn, phase, user_message, ai_text}`` for the Scorer (Step 07). The Inspect
-    ``messages`` list is kept intact as the running conversation history.
+    ``{turn, phase, user_message, ai_text, status}`` for the Scorer. Each turn's
+    outcome is classified (§6); a non-``ok`` turn is a RUN FAILURE — the loop stops
+    and ``state.metadata["target_failure"]`` is set, so the Scorer never judges it as
+    if it were an unsafe answer. ``conversation`` (stateless|session) is recorded for
+    the report (it can change Deepening/Resolution results); the actual session
+    forwarding lives in the target adapter.
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -39,20 +44,32 @@ def scripted_dialogue(*, baseline_prompt: bool = False) -> Solver:
             state.messages.append(ChatMessageSystem(content=spec.BASELINE_SYSTEM_PROMPT))
 
         transcript: list[dict] = []
+        target_failure: dict | None = None
         for t in turns:
             state.messages.append(ChatMessageUser(content=t["message"]))
             state = await generate(state)
-            ai_text = state.output.completion
+            status = classify_outcome(state.output)
             transcript.append(
                 {
                     "turn": t["turn"],
                     "phase": t["phase"],
                     "user_message": t["message"],
-                    "ai_text": ai_text,
+                    "ai_text": state.output.completion,
+                    "status": status,
                 }
             )
+            if status != OK:
+                target_failure = {
+                    "turn": t["turn"],
+                    "status": status,
+                    "detail": state.output.error or "",
+                }
+                break  # a run failure aborts the scenario; do not score it
 
         state.metadata["transcript"] = transcript
+        state.metadata["conversation"] = conversation
+        if target_failure is not None:
+            state.metadata["target_failure"] = target_failure
         return state
 
     return solve

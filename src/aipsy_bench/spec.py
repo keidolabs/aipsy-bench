@@ -30,6 +30,9 @@ def _resolve_data_v1() -> Path:
 # at runtime against its MANIFEST. A changed byte = a content change = a data bump.
 DATA_V1 = _resolve_data_v1()
 MANIFEST_NAME = "MANIFEST.sha256"
+# The bundle version — changes when any content changes (a different score meaning).
+# Compare/leaderboard refuse to mix runs of different DATA_VERSIONs (§1.2 / §7.1).
+DATA_VERSION = "v1"
 
 # Default battery = s01–s20, drawn from the 3 non-reserved domain files (§3.1).
 SCENARIO_FILES = (

@@ -40,9 +40,11 @@ def aipsy_bench(
     scenario_ids: list[str] | None = None,
     quick: bool = False,
     baseline_prompt: bool = False,
+    conversation: str = "stateless",
 ) -> Task:
     """Assemble the benchmark task. ``target`` only decides whether to wire mock
-    judges (offline self-test); the model under test is passed to ``eval()``."""
+    judges (offline self-test); the model under test is passed to ``eval()``.
+    ``conversation`` is recorded for the report (Tier-1/2 session targets set it)."""
     if judges not in _PANEL_PROVIDERS:
         raise ValueError(f"judges must be 'single' or 'gold', got {judges!r}")
 
@@ -56,6 +58,6 @@ def aipsy_bench(
 
     return Task(
         dataset=build_dataset(scenario_ids=scenario_ids),
-        solver=scripted_dialogue(baseline_prompt=baseline_prompt),
+        solver=scripted_dialogue(baseline_prompt=baseline_prompt, conversation=conversation),
         scorer=clinical_judge_panel(panel=judges, judges=judge_models, cache=not mock),
     )

@@ -31,6 +31,12 @@ def evaluate_gate(
 
     failures: list[dict] = []
     for sid, vals in by_scenario.items():
+        # §6 — a run failure means we couldn't obtain a score; it fails the gate
+        # regardless of validation status (it is not a safety claim, just absence).
+        if vals.get("run_failure"):
+            failures.append({"scenario": sid, "metric": None, "value": None,
+                             "threshold": None, "kind": "run_failure"})
+            continue
         for m in spec.METRICS:
             if not validation.is_gateable(m):
                 continue
@@ -97,12 +103,29 @@ def gate_result(log, validation: JudgeValidation | None = None, **overrides) -> 
     return evaluate_gate(_by_scenario(log), validation, thresholds=thresholds, ai_trust_target=target)
 
 
-def assert_gate(log, *, validation: JudgeValidation | None = None, **thresholds) -> None:
+def assert_gate(
+    log,
+    *,
+    validation: JudgeValidation | None = None,
+    baseline=None,
+    max_regression: float = 0.3,
+    no_below_threshold: bool = True,
+    **thresholds,
+) -> None:
     """pytest surface: assert the gate passes; on failure print the §5 remediation
     cards and raise ``AssertionError``. A descriptive_only/PENDING metric can never
-    fail here (the validation guard)."""
+    fail here (the validation guard). When ``baseline`` (another .eval log) is given,
+    the §7.1 regression gate is also applied."""
+    validation = validation if validation is not None else load_validation()
     result = gate_result(log, validation, **thresholds)
-    if result["passed"]:
+
+    reg = None
+    if baseline is not None:
+        from .compare import regression_gate  # local import avoids a cycle
+        reg = regression_gate(baseline, log, validation,
+                              max_regression=max_regression, no_below_threshold=no_below_threshold)
+
+    if result["passed"] and (reg is None or reg["passed"]):
         return
 
     from .diagnostics import build_all_cards  # local import avoids a cycle
@@ -110,10 +133,16 @@ def assert_gate(log, *, validation: JudgeValidation | None = None, **thresholds)
     failed_scenarios = {f["scenario"] for f in result["failures"]}
     cards: list[str] = []
     for s in log.samples:
-        if s.id in failed_scenarios:
+        if s.id in failed_scenarios and not s.scores[SCORER_NAME].metadata.get("run_failure"):
             cards.extend(build_all_cards(s.scores[SCORER_NAME].metadata))
-    summary = ", ".join(
-        f"{f['scenario']}:{f['metric']}={f['value']:.2f}<{f['threshold']:.2f}"
-        for f in result["failures"]
-    )
-    raise AssertionError("aipsy-bench gate FAILED — " + summary + "\n\n" + "\n\n".join(cards))
+
+    parts = [_fmt_failure(f) for f in result["failures"]]
+    if reg and not reg["passed"]:
+        parts += [f"{f['metric']}:{f['kind']}" for f in reg["failures"]]
+    raise AssertionError("aipsy-bench gate FAILED — " + ", ".join(parts) + "\n\n" + "\n\n".join(cards))
+
+
+def _fmt_failure(f: dict) -> str:
+    if f["kind"] == "run_failure":
+        return f"{f['scenario']}:RUN_FAILURE"
+    return f"{f['scenario']}:{f['metric']}={f['value']:.2f}<{f['threshold']:.2f}"
