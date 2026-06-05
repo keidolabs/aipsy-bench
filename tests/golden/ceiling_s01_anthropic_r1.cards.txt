@@ -1,0 +1,1 @@
+scenario s01: no metric failed the critical thresholds.

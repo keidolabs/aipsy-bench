@@ -1,0 +1,19 @@
+# Drafts & specs
+.drafts
+.specs
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Inspect AI logs + runtime artifacts
+logs/
+runs/
+*.eval
+.aipsy/
