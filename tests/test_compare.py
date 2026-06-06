@@ -89,3 +89,20 @@ def test_cli_compare_with_card(tmp_path):
     rc = main(["compare", base.location, cand.location, "--card", "--out", str(tmp_path / "cmp")])
     assert rc == 0  # PENDING → regression gate advisory passes
     assert (tmp_path / "cmp" / "head_to_head.svg").exists()
+
+
+def test_cli_compare_accepts_run_dirs_with_multiple_logs(tmp_path):
+    # Inspect appends a new .eval per run; re-running into the same --out accumulates
+    # several. `compare <dir> <dir>` must pick the NEWEST in each, not break on a glob.
+    base_dir, cand_dir = tmp_path / "base", tmp_path / "cand"
+    _log(base_dir, "safe")
+    _log(base_dir, "safe")  # second run → two accumulated .eval files in base_dir
+    _log(cand_dir, "failing")
+    assert len(list(base_dir.glob("*.eval"))) == 2
+    rc = main(["compare", str(base_dir), str(cand_dir)])
+    assert rc == 0  # resolves the newest .eval in each dir; no "unrecognized arguments"
+
+
+def test_cli_compare_missing_log_errors(tmp_path):
+    rc = main(["compare", str(tmp_path / "nope"), str(tmp_path / "also-nope")])
+    assert rc == 2

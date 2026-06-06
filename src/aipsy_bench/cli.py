@@ -149,7 +149,11 @@ def _apply_regression_gate(args: argparse.Namespace, log, gate_ok: bool) -> bool
 
     from .compare import regression_gate, render_compare_table
 
-    base = read_eval_log(args.gate_baseline)
+    base_path = _resolve_eval(args.gate_baseline)
+    if not base_path:
+        print(f"error: no .eval log found for --gate-baseline {args.gate_baseline!r}", file=sys.stderr)
+        return gate_ok
+    base = read_eval_log(base_path)
     reg = regression_gate(
         base, log, load_validation(args.validation_artifact), max_regression=args.max_regression
     )
@@ -180,11 +184,17 @@ def _compare(args: argparse.Namespace) -> int:
 
     from .compare import CompareError, compare, regression_gate, render_compare_table
 
-    base, cand = read_eval_log(args.base), read_eval_log(args.cand)
+    base_path, cand_path = _resolve_eval(args.base), _resolve_eval(args.cand)
+    for label, raw, resolved in (("base", args.base, base_path), ("cand", args.cand, cand_path)):
+        if not resolved:
+            print(f"error: no .eval log found for {label} ({raw!r}) — pass a .eval file or a run dir",
+                  file=sys.stderr)
+            return 2
+    base, cand = read_eval_log(base_path), read_eval_log(cand_path)
     try:
         diff = compare(base, cand)
     except CompareError as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(f"refused: {e}", file=sys.stderr)  # an intentional comparability guard (§7.1)
         return 2
 
     print(render_compare_table(diff))
@@ -209,9 +219,27 @@ def _compare(args: argparse.Namespace) -> int:
     return 0 if reg["passed"] else 1
 
 
+def _resolve_eval(path_str: str) -> str | None:
+    """Resolve a CLI arg to a single .eval file.
+
+    Accepts a .eval file directly, OR a directory — a run ``--out`` dir or its
+    ``logs/`` subdir — in which case the NEWEST .eval is chosen. This avoids the
+    fragile ``logs/*.eval`` shell glob (Inspect appends a new timestamped log per
+    run, so the glob can match several and shift argparse positionals).
+    """
+    p = Path(path_str)
+    if p.is_file():
+        return str(p)
+    candidates: list[Path] = []
+    if p.is_dir():
+        candidates = list(p.glob("*.eval")) or list(p.glob("logs/*.eval"))
+    if not candidates:
+        return None
+    return str(max(candidates, key=lambda x: x.stat().st_mtime))
+
+
 def _find_latest_log(out_dir: str) -> str | None:
-    logs = sorted(Path(out_dir).glob("logs/*.eval"), key=lambda p: p.stat().st_mtime)
-    return str(logs[-1]) if logs else None
+    return _resolve_eval(out_dir)
 
 
 def _explain(args: argparse.Namespace) -> int:
@@ -219,7 +247,7 @@ def _explain(args: argparse.Namespace) -> int:
 
     from . import trust
 
-    log_path = args.log or _find_latest_log(args.out)
+    log_path = _resolve_eval(args.log) if args.log else _find_latest_log(args.out)
     if not log_path:
         print(f"error: no .eval log found (pass --log or run in {args.out} first)", file=sys.stderr)
         return 2
@@ -276,7 +304,7 @@ def _doctor(args: argparse.Namespace) -> int:
 def _provenance(args: argparse.Namespace) -> int:
     from inspect_ai.log import read_eval_log
 
-    log_path = args.log or _find_latest_log(args.out)
+    log_path = _resolve_eval(args.log) if args.log else _find_latest_log(args.out)
     if not log_path:
         print(f"error: no .eval log found (pass --log or run in {args.out} first)", file=sys.stderr)
         return 2
@@ -378,8 +406,8 @@ def build_parser() -> argparse.ArgumentParser:
     pv.set_defaults(func=_provenance)
 
     c = sub.add_parser("compare", help="diff two .eval logs → deltas + regression gate (§7.1)")
-    c.add_argument("base", help="baseline .eval log")
-    c.add_argument("cand", help="candidate .eval log")
+    c.add_argument("base", help="baseline: a .eval file OR a run dir (newest .eval is used)")
+    c.add_argument("cand", help="candidate: a .eval file OR a run dir (newest .eval is used)")
     c.add_argument("--card", action="store_true", help="render the head-to-head card")
     c.add_argument("--out", default="aipsy-compare", help="output directory for the head-to-head card")
     c.add_argument("--max-regression", type=float, default=0.3)
@@ -411,7 +439,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except bundle.BundleIntegrityError as e:
+        # An expected, user-facing guard (§1.2) — present it cleanly, not as a traceback.
+        print(f"error: frozen bundle integrity check failed (§1.2) — content has been "
+              f"altered; refusing to proceed.\n{e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

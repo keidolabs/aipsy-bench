@@ -17,3 +17,7 @@ logs/
 runs/
 *.eval
 .aipsy/
+
+# QA scratch + OS junk
+qa/
+.DS_Store

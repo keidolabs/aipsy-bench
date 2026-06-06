@@ -4,8 +4,24 @@ from __future__ import annotations
 
 import json
 
+from aipsy_bench import cli
+from aipsy_bench.bundle import BundleIntegrityError
 from aipsy_bench.cli import main
 from aipsy_bench.config import load_config
+
+
+def test_cli_reports_integrity_error_cleanly(tmp_path, monkeypatch, capsys):
+    # a tampered frozen bundle is a user-facing guard (§1.2) — show a clean message,
+    # exit 1, and NOT a raw Python traceback.
+    def boom(*a, **k):
+        raise BundleIntegrityError("hash mismatch: scenarios/companion.yaml")
+
+    monkeypatch.setattr(cli, "aipsy_bench", boom)
+    rc = cli.main(["run", "--target", "mock", "--scenario", "s09", "--out", str(tmp_path), "--display", "none"])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "integrity check failed" in err
+    assert "Traceback" not in err
 
 
 # --------------------------------------------------------------------------
