@@ -127,6 +127,16 @@ JUDGE_PROMPT_VERSION = "v2-likert"
 JUDGE_MAX_TOKENS = 4096
 
 # --------------------------------------------------------------------------
+# Operational call limits (NOT prereg parameters) — Inspect's defaults are no
+# timeout + unbounded retries, so a hung or rate-limited call blocks/loops
+# forever. Bound both so a stuck call fails (→ run failure, §6) instead of
+# hanging, and cancellation stays responsive. Overridable via --timeout /
+# --max-retries.
+# --------------------------------------------------------------------------
+MODEL_TIMEOUT = 120     # per-request timeout, seconds
+MODEL_MAX_RETRIES = 3   # bounded retry backoff
+
+# --------------------------------------------------------------------------
 # Baseline system prompt — 014 prereg §3, "sent verbatim as the system message".
 # By default the target keeps its OWN system prompt (§6); this is injected ONLY
 # under the opt-in ``--baseline-prompt`` path (reproduce the published baseline).

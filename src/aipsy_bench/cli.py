@@ -6,6 +6,7 @@ that writes artifacts and drives a gate exit code, with the §16 operability ver
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -23,6 +24,59 @@ from .validation import load_validation
 # Rough per-call cost / throughput for --dry-run (NOT billing-accurate; a planning aid).
 _EST_COST_PER_CALL = 0.0015
 _EST_CALLS_PER_MIN = 60.0
+
+# provider → (SDK import module, pyproject extra) for clean "install the extra" hints.
+# The provider SDKs are optional extras (offline/mock runs need none); a real run
+# needs the SDK for the target provider + every judge in the panel.
+_PROVIDER_SDK = {"openai": "openai", "anthropic": "anthropic", "google": "google.genai"}
+_PROVIDER_EXTRA = {"openai": "openai", "anthropic": "anthropic", "google": "google"}
+
+
+def _sdk_installed(provider: str) -> bool:
+    module = _PROVIDER_SDK.get(provider)
+    if module is None:
+        return True  # unknown/other provider — let Inspect validate it
+    try:
+        return importlib.util.find_spec(module) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+def _required_providers(ref: str, judges: str) -> list[str]:
+    """Providers whose SDK a real run needs: the judge panel + the target provider."""
+    provs = set(spec.PROVIDERS if judges == "gold" else (spec.PRIMARY_JUDGE_PROVIDER,))
+    target_provider = ref.split("/", 1)[0]
+    if target_provider in _PROVIDER_SDK:
+        provs.add(target_provider)
+    return sorted(provs)
+
+
+def _missing_sdk_hint(missing: list[str]) -> str:
+    extras = sorted({_PROVIDER_EXTRA[p] for p in missing})
+    per = " ".join(f"--extra {e}" for e in extras)
+    return (
+        f"error: missing provider SDK(s) for {missing} — needed for a real run "
+        "(offline/--target mock needs none). Install the optional extras:\n"
+        f"  uv sync {per}\n"
+        "  uv sync --all-extras        # all judge providers (openai, anthropic, google)"
+    )
+
+
+def _parse_judge_overrides(items: list[str] | None) -> dict[str, str] | None:
+    """Parse repeated ``--judge-override PROVIDER=MODEL`` flags into a dict."""
+    if not items:
+        return None
+    out: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"--judge-override must be PROVIDER=MODEL, got {item!r}")
+        provider, model = (s.strip() for s in item.split("=", 1))
+        if provider not in spec.PROVIDERS:
+            raise ValueError(f"--judge-override provider must be one of {list(spec.PROVIDERS)}, got {provider!r}")
+        if not model:
+            raise ValueError(f"--judge-override needs a model for {provider!r}")
+        out[provider] = model
+    return out
 
 
 def estimate(n_scenarios: int, judges: str) -> dict:
@@ -53,6 +107,13 @@ def _run(args: argparse.Namespace) -> int:
     out = Path(args.out or cfg.out or "aipsy-run")
     max_cost = args.max_cost if args.max_cost is not None else cfg.max_cost
 
+    try:
+        flag_overrides = _parse_judge_overrides(args.judge_override)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    judge_overrides = flag_overrides or (cfg.judge_overrides or None)
+
     n_scen = len(scenario_ids) if scenario_ids else (len(quick_scenario_ids()) if quick else spec.N_SCENARIOS)
     est = estimate(n_scen, judges)
 
@@ -67,10 +128,18 @@ def _run(args: argparse.Namespace) -> int:
         print(f"aborting: estimated ~${est['est_cost_usd']:.2f} exceeds --max-cost ${max_cost:.2f}", file=sys.stderr)
         return 2
 
+    if not is_mock_ref(ref):  # a real run needs the provider SDKs (optional extras)
+        missing = [p for p in _required_providers(ref, judges) if not _sdk_installed(p)]
+        if missing:
+            print(_missing_sdk_hint(missing), file=sys.stderr)
+            return 2
+
     resolved = resolve_target(ref)
     task = aipsy_bench(
         target=ref, judges=judges, scenario_ids=scenario_ids,
         quick=quick, baseline_prompt=args.baseline_prompt,
+        timeout=args.timeout, max_retries=args.max_retries,
+        max_connections=args.max_connections, judge_overrides=judge_overrides,
     )
 
     if args.resume:
@@ -79,7 +148,10 @@ def _run(args: argparse.Namespace) -> int:
             print(f"error: no run with id {args.resume!r} under {out}/logs", file=sys.stderr)
             return 2
     else:
-        log = inspect_eval(task, model=resolved.model, display=args.display, log_dir=str(out / "logs"))[0]
+        # fail_on_error=False → one bad scenario never aborts a long battery; it is
+        # logged (run failure / incomplete) and the rest still score.
+        log = inspect_eval(task, model=resolved.model, display=args.display,
+                           log_dir=str(out / "logs"), fail_on_error=False)[0]
 
     incomplete = log.status != "success"
     extra_warnings = []
@@ -97,8 +169,9 @@ def _run(args: argparse.Namespace) -> int:
     )
 
     if not args.no_card:
-        if incomplete or result["run_failures"]:
-            print("note: cards skipped — run incomplete or had target failures (not card-eligible, §6/§16)", file=sys.stderr)
+        if incomplete or result["run_failures"] or result["judge_overrides"]:
+            print("note: cards skipped — run incomplete / target failures / judge override "
+                  "(not card-eligible, §6/§8/§16)", file=sys.stderr)
         else:
             _emit_cards(result, out)
 
@@ -284,21 +357,23 @@ def _doctor(args: argparse.Namespace) -> int:
         print(f"  data/v1 integrity: FAIL — {e}")
         data_ok = False
 
-    providers = spec.PROVIDERS if judges == "gold" else (spec.PRIMARY_JUDGE_PROVIDER,)
     if is_mock_ref(ref):
-        print("  judges: mock target → offline mock judges, no provider keys needed")
-        keys_ok = True
+        print("  judges: mock target → offline mock judges, no keys or SDKs needed")
+        ready = True
     else:
-        print(f"  judges ({judges} panel):")
-        keys_ok = True
-        for p in providers:
+        print(f"  providers ({judges} panel + target) — key + SDK:")
+        ready = True
+        for p in _required_providers(ref, judges):
             env = spec.API_ENV_VARS[p]
-            present = bool(os.environ.get(env))
-            keys_ok = keys_ok and present
-            print(f"    {p} ({spec.JUDGE_MODEL_PINS[p]}): {env} {'present' if present else 'MISSING'}")
+            key_ok = bool(os.environ.get(env))
+            sdk_ok = _sdk_installed(p)
+            ready = ready and key_ok and sdk_ok
+            sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[p]})"
+            print(f"    {p} ({spec.JUDGE_MODEL_PINS[p]}): {env} "
+                  f"{'present' if key_ok else 'MISSING'}; SDK {sdk_str}")
 
     print(f"\n  resolved: target={ref}  judges={judges}  data_version={spec.DATA_VERSION}")
-    return 0 if (data_ok and keys_ok) else 1
+    return 0 if (data_ok and ready) else 1
 
 
 def _provenance(args: argparse.Namespace) -> int:
@@ -359,6 +434,67 @@ def _cite(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prompt_provider() -> str | None:
+    print("Select provider:")
+    for i, p in enumerate(spec.PROVIDERS, 1):
+        print(f"  [{i}] {p} ({spec.JUDGE_MODEL_PINS[p]})")
+    choice = input("> ").strip()
+    if choice.isdigit() and 1 <= int(choice) <= len(spec.PROVIDERS):
+        return spec.PROVIDERS[int(choice) - 1]
+    if choice in spec.PROVIDERS:
+        return choice
+    return None
+
+
+def _keys_set(args: argparse.Namespace) -> int:
+    """Interactively save a provider key to the local .env (input hidden, never via argv)."""
+    import getpass
+
+    from . import keys
+
+    if args.provider:
+        provider = args.provider
+    elif sys.stdin.isatty():
+        provider = _prompt_provider()
+        if provider is None:
+            print("error: invalid selection", file=sys.stderr)
+            return 2
+    else:
+        print("error: --provider required (no interactive terminal)", file=sys.stderr)
+        return 2
+
+    var = spec.API_ENV_VARS[provider]
+    try:
+        key = getpass.getpass(f"Paste {var} (input hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\naborted", file=sys.stderr)
+        return 1
+    if not key:
+        print(f"{var}: nothing entered — not saved", file=sys.stderr)
+        return 1
+
+    path = keys.set_provider_key(provider, key)
+    print(f"saved {var} → {path}  [{keys.mask(key)}]  (gitignored — never committed)")
+    print("verify: aipsy-bench doctor --judges <single|gold>")
+    return 0
+
+
+def _keys_path(args: argparse.Namespace) -> int:
+    from . import keys
+
+    print(keys.env_path())
+    return 0
+
+
+def _keys_status(args: argparse.Namespace) -> int:
+    from . import keys
+
+    print(f".env: {keys.env_path()}")
+    for provider, present in keys.current_keys().items():
+        print(f"  {spec.API_ENV_VARS[provider]}: {'present' if present else 'not set'}")
+    return 0
+
+
 def _scenarios_list(args: argparse.Namespace) -> int:
     for s in bundle.load_scenarios(include_reserved=args.include_reserved):
         tag = "crisis" if s.crisis else "      "
@@ -383,6 +519,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--dry-run", action="store_true", help="estimate call counts/cost/time; make NO scored calls (§16)")
     r.add_argument("--max-cost", type=float, default=None, help="abort if the --dry-run cost estimate exceeds this (USD)")
     r.add_argument("--resume", default=None, help="resume a prior run by run_id (lean on Inspect's cache)")
+    r.add_argument("--timeout", type=int, default=None,
+                   help=f"per-call timeout in seconds (default {spec.MODEL_TIMEOUT}) — bounds a hung/slow call")
+    r.add_argument("--max-retries", type=int, default=None,
+                   help=f"max retries per call (default {spec.MODEL_MAX_RETRIES}) — bounds rate-limit backoff")
+    r.add_argument("--max-connections", type=int, default=None,
+                   help="cap concurrent calls per provider — lower it (e.g. 2-4) to ease rate limiting")
+    r.add_argument("--judge-override", action="append", metavar="PROVIDER=MODEL",
+                   help="swap a judge for testing, e.g. anthropic=claude-haiku-4-5 — makes the run "
+                        "NON-comparable (not the frozen instrument, not board/card eligible, §8)")
     r.add_argument("--config", default=None, help="path to aipsy-bench.yaml (default: ./aipsy-bench.yaml)")
     r.add_argument("--validation-artifact", default=None, help="path to a 014 gate artifact (else PENDING)")
     r.add_argument("--gate-baseline", default=None, help="a baseline .eval log; fail on safety regression vs it (§7.1)")
@@ -390,7 +535,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--against-board", action="store_true", help="overlay your score on the published vanilla baselines (§13.6)")
     r.add_argument("--domain", default=None, choices=["mental_health", "companion", "coaching"],
                    help="restrict --against-board to one domain")
-    r.add_argument("--display", default="plain", help="Inspect display mode (plain|rich|none)")
+    r.add_argument("--display", default=None,
+                   help="Inspect display mode (default: auto — live full UI in a terminal, "
+                        "plain when piped). Options: full|rich|plain|log|none")
     r.set_defaults(func=_run)
 
     d = sub.add_parser("doctor", help="preflight: data SHA, judge keys, resolved config (no scored calls, §16)")
@@ -428,6 +575,17 @@ def build_parser() -> argparse.ArgumentParser:
     ci = sub.add_parser("cite", help="print BibTeX for the OSF registration + tool/data version")
     ci.set_defaults(func=_cite)
 
+    k = sub.add_parser("keys", help="save provider API keys to your local .env (your keys, your cost)")
+    ksub = k.add_subparsers(dest="kcmd", required=True)
+    kset = ksub.add_parser("set", help="interactively save a provider key to .env (input hidden)")
+    kset.add_argument("--provider", choices=list(spec.PROVIDERS),
+                      help="provider to set (omit for an interactive picker)")
+    kset.set_defaults(func=_keys_set)
+    kstatus = ksub.add_parser("status", help="show which provider keys are present in .env (no values)")
+    kstatus.set_defaults(func=_keys_status)
+    kpath = ksub.add_parser("path", help="print the .env path that will be used")
+    kpath.set_defaults(func=_keys_path)
+
     sc = sub.add_parser("scenarios", help="browse the public benchmark content")
     scsub = sc.add_subparsers(dest="scmd", required=True)
     lst = scsub.add_parser("list", help="list scenarios")
@@ -437,7 +595,24 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _load_dotenv() -> None:
+    """Load a project ``.env`` into the environment (provider keys), matching what
+    Inspect does on the eval path — so ``doctor``/``--dry-run`` see the same keys a
+    real run will. ``override=False`` → an exported shell var wins. We never store or
+    transmit keys; they're read from the environment and passed to the providers."""
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
+try:  # private path, but stable — used only as a clean-message backstop
+    from inspect_ai._util.error import PrerequisiteError as _PrereqError
+except Exception:  # noqa: BLE001
+    _PrereqError = ()  # type: ignore[assignment]
+
+
 def main(argv: list[str] | None = None) -> int:
+    _load_dotenv()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
@@ -446,6 +621,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: frozen bundle integrity check failed (§1.2) — content has been "
               f"altered; refusing to proceed.\n{e}", file=sys.stderr)
         return 1
+    except _PrereqError:
+        # Backstop for a missing provider SDK not caught by the run preflight.
+        print("error: a provider SDK is missing. Install the optional extras:\n"
+              "  uv sync --all-extras   (or --extra openai / anthropic / google)", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -51,6 +51,12 @@ def is_board_eligible(result_json: dict) -> bool:
         return False
     if result_json.get("run_failures"):  # a run failure means the run is incomplete (§6)
         return False
+    if result_json.get("judge_failures"):  # degraded instrument — not a clean comparable run
+        return False
+    if result_json.get("judge_overrides"):  # a swapped judge is not the frozen instrument (§8)
+        return False
+    if result_json.get("incomplete"):
+        return False
     if any("partial battery" in w for w in result_json.get("warnings", [])):
         return False
     return len(result_json["scores"]["by_scenario"]) == spec.N_SCENARIOS

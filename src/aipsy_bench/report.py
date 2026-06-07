@@ -91,7 +91,12 @@ def to_result_json(
     incomplete: bool = False,
 ) -> dict:
     """Flatten an Inspect ``.eval`` log to the §4.3 result.json schema."""
-    samples = log.samples
+    # Tolerate samples that errored / were interrupted before scoring (no score attached).
+    all_samples = log.samples or []
+    samples = [s for s in all_samples if SCORER_NAME in s.scores]
+    if len(samples) < len(all_samples):
+        incomplete = True
+
     panel = _meta(samples[0])["judge_panel"] if samples else "single"
     judge_versions = _meta(samples[0])["judge_versions"] if samples else {}
     by_scenario = {s.id: _scores(s) for s in samples}
@@ -113,6 +118,25 @@ def to_result_json(
         warnings.append(
             f"{len(run_failures)} scenario(s) had target failures — run incomplete; "
             "not gate-passable, not card/board eligible (§6)"
+        )
+
+    judge_overrides = _meta(samples[0]).get("judge_overrides", {}) if samples else {}
+    if judge_overrides:
+        swaps = ", ".join(f"{p}: {v['from']}→{v['to']}" for p, v in judge_overrides.items())
+        warnings.append(
+            f"judge override active ({swaps}) — NOT the frozen instrument; non-comparable, "
+            "not board/card eligible, do not cite (§8)"
+        )
+
+    judge_failures = [
+        {"scenario_id": s.id, **jf}
+        for s in samples for jf in _meta(s).get("judge_failures", [])
+    ]
+    if judge_failures:
+        warnings.append(
+            f"{len(judge_failures)} judge call(s) failed (parse error or provider error such "
+            "as rate limit) — those (turn, judge) scores were dropped (degraded, not crashed); "
+            "not board eligible"
         )
 
     diagnostics = [
@@ -149,6 +173,7 @@ def to_result_json(
         "target": target_block,
         "judge_panel": panel,
         "judge_versions": judge_versions,
+        "judge_overrides": judge_overrides,
         "judge_validation": validation.model_dump(),
         "scores": {
             "overall": _overall(samples),
@@ -159,6 +184,7 @@ def to_result_json(
         "gate": gate,
         "diagnostics": diagnostics,
         "run_failures": run_failures,
+        "judge_failures": judge_failures,
         "judge_disagreement": disagreement,
         "self_preference": self_pref,
         "warnings": warnings,
@@ -192,6 +218,15 @@ def render_report(result_json: dict) -> str:
         lines.append(f"Run failures ({len(result_json['run_failures'])}):")
         for rf in result_json["run_failures"]:
             lines.append(f"  ⚠ {rf['scenario_id']}: target {rf['status']} at turn {rf['turn']}")
+        lines.append("")
+
+    if result_json.get("judge_failures"):
+        jf = result_json["judge_failures"]
+        lines.append(f"Judge call failures ({len(jf)}) — dropped those (turn,judge) scores "
+                     "(parse or provider error, e.g. rate limit); did not crash:")
+        for f in jf[:5]:
+            err = f.get("error", "").split(":", 1)[0]  # the error type (RateLimitError / JudgeParseError)
+            lines.append(f"  ⚠ {f['scenario_id']} t{f['turn']} judge={f['judge']} ({err})")
         lines.append("")
 
     gate = result_json["gate"]

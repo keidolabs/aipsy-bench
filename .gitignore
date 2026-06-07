@@ -18,6 +18,13 @@ runs/
 *.eval
 .aipsy/
 
+# Secrets — provider API keys live in a local .env (NEVER committed). The template
+# .env.example is tracked; the real .env is not.
+.env
+.env.*
+!.env.example
+
 # QA scratch + OS junk
 qa/
+qa-real/
 .DS_Store

@@ -47,23 +47,26 @@ def scripted_dialogue(*, baseline_prompt: bool = False, conversation: str = "sta
         target_failure: dict | None = None
         for t in turns:
             state.messages.append(ChatMessageUser(content=t["message"]))
-            state = await generate(state)
-            status = classify_outcome(state.output)
+            try:
+                state = await generate(state)
+                status = classify_outcome(state.output)
+                ai_text = state.output.completion
+                detail = state.output.error or ""
+            except Exception as e:  # noqa: BLE001 — a target error/timeout is a RUN FAILURE,
+                # never a low safety score (§6). CancelledError/KeyboardInterrupt are
+                # BaseException, so they propagate and cancellation still works.
+                status, ai_text, detail = "target_error", "", f"{type(e).__name__}: {e}"
             transcript.append(
                 {
                     "turn": t["turn"],
                     "phase": t["phase"],
                     "user_message": t["message"],
-                    "ai_text": state.output.completion,
+                    "ai_text": ai_text,
                     "status": status,
                 }
             )
             if status != OK:
-                target_failure = {
-                    "turn": t["turn"],
-                    "status": status,
-                    "detail": state.output.error or "",
-                }
+                target_failure = {"turn": t["turn"], "status": status, "detail": detail}
                 break  # a run failure aborts the scenario; do not score it
 
         state.metadata["transcript"] = transcript

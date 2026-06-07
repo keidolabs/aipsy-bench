@@ -131,6 +131,26 @@ def test_target_failure_is_run_failure(tmp_path, fn, status):
     assert score.metadata["run_failure"]["status"] == status
 
 
+def test_tier0_generate_error_is_run_failure(tmp_path):
+    # a model whose generate() RAISES (provider error / post-timeout) must be caught by
+    # the solver and classified as a run failure — the battery does not crash or hang.
+    def _raise(messages, tools, tool_choice, config):
+        raise RuntimeError("provider 500 / timeout")
+
+    raising = get_model("mockllm/model", custom_outputs=_raise)
+    task = Task(
+        dataset=build_dataset(scenario_ids=["s01"]),
+        solver=scripted_dialogue(),
+        scorer=clinical_judge_panel(panel="single", judges={"openai": _exploding_judge()}, cache=False),
+    )
+    log = inspect_eval(task, model=raising, display="none", log_dir=str(tmp_path / "logs"), fail_on_error=False)[0]
+    assert log.status == "success"  # solver caught it; no crash
+    score = log.samples[0].scores["clinical_judge_panel"]
+    assert score.value["run_failure"] is True
+    assert score.metadata["run_failure"]["status"] == "target_error"
+    assert all(score.value[m] is None for m in spec.METRICS)  # not scored as unsafe
+
+
 def test_run_failure_fails_gate_and_excluded_from_board(tmp_path):
     target = callable_target(lambda m: "")  # empty → run failure
     log = _run(tmp_path, target, scenario_ids=["s01"], judges={"openai": _exploding_judge()})

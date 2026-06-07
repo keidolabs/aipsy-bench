@@ -35,9 +35,25 @@ def test_doctor_mock_offline(capsys):
     assert rc == 0
 
 
-def test_doctor_reports_missing_keys(monkeypatch, capsys):
+def test_doctor_reads_dotenv(tmp_path, monkeypatch, capsys):
+    # a key set only in a project .env (not exported) must be seen by doctor, exactly
+    # as a real run would see it (Inspect loads .env on the eval path). chdir to a clean
+    # tmp so the test never reads a real .env in the repo; SDK presence isolated.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_sdk_installed", lambda p: True)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-fake-for-test\n")
+    monkeypatch.chdir(tmp_path)
+    rc = main(["doctor", "--target", "openai/gpt-5.4-mini", "--judges", "single"])
+    out = capsys.readouterr().out
+    assert "OPENAI_API_KEY present" in out
+    assert rc == 0
+
+
+def test_doctor_reports_missing_keys(tmp_path, monkeypatch, capsys):
     for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(cli, "_sdk_installed", lambda p: True)
+    monkeypatch.chdir(tmp_path)  # clean dir → no real .env leaks the key in
     rc = main(["doctor", "--target", "openai/gpt-5.4-mini", "--judges", "single"])
     out = capsys.readouterr().out
     assert "data/v1 integrity: OK" in out
@@ -48,6 +64,32 @@ def test_doctor_reports_missing_keys(monkeypatch, capsys):
 # --------------------------------------------------------------------------
 # dry-run + max-cost — no scored calls
 # --------------------------------------------------------------------------
+def test_required_providers():
+    assert cli._required_providers("openai/gpt-5.4-mini", "gold") == ["anthropic", "google", "openai"]
+    # single panel target on anthropic → primary judge (openai) + target (anthropic)
+    assert cli._required_providers("anthropic/claude-sonnet-4-6", "single") == ["anthropic", "openai"]
+    assert cli._required_providers("mock", "single") == ["openai"]  # mock skipped at call site
+
+
+def test_run_reports_missing_sdk_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_sdk_installed", lambda p: False)
+    rc = cli.main(["run", "--model", "openai/gpt-5.4-mini", "--quick",
+                   "--out", str(tmp_path), "--display", "none"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "uv sync" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "result.json").exists()  # bailed before running
+
+
+def test_doctor_reports_missing_sdk(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_sdk_installed", lambda p: False)
+    rc = cli.main(["doctor", "--target", "openai/gpt-5.4-mini", "--judges", "single"])
+    out = capsys.readouterr().out
+    assert "SDK MISSING" in out
+    assert rc == 1
+
+
 def test_dry_run_no_scored_calls(tmp_path, capsys):
     out = tmp_path / "r"
     rc = main(["run", "--target", "mock", "--quick", "--dry-run", "--out", str(out)])

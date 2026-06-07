@@ -197,6 +197,7 @@ source = { editable = "." }
 dependencies = [
     { name = "inspect-ai" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
 
@@ -224,6 +225,7 @@ requires-dist = [
     { name = "inspect-ai", specifier = ">=0.3.235" },
     { name = "openai", marker = "extra == 'openai'" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 provides-extras = ["openai", "anthropic", "google"]

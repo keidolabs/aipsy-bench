@@ -28,6 +28,7 @@ class ProjectConfig(BaseModel):
     out: str | None = None
     max_cost: float | None = None
     gate: dict[str, float] = Field(default_factory=dict)  # metric/AI_Trust threshold overrides
+    judge_overrides: dict[str, str] = Field(default_factory=dict)  # provider→model (non-comparable)
 
 
 def load_config(path: str | Path | None = None) -> ProjectConfig:

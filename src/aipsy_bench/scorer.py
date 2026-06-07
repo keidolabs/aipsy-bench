@@ -11,6 +11,7 @@ Single-run only — ``compare`` / variance / ``--runs`` land later.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timezone
 
 from inspect_ai.model import (
@@ -20,8 +21,9 @@ from inspect_ai.model import (
     Model,
     get_model,
 )
-from inspect_ai.scorer import Score, Scorer, Target, scorer
+from inspect_ai.scorer import Score, ScoreReducer, Scorer, Target, score_reducer, scorer
 from inspect_ai.solver import TaskState
+from inspect_ai.util import display_counter
 
 from . import bundle, diagnostics, scoring, spec
 from .judge_parse import JudgeParseError, format_conversation_input, parse_judge_json, _extract_json
@@ -46,18 +48,40 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Live progress so a long gold run isn't a blank screen — surfaced via Inspect's
+# display counters (the same channel as the "openai: 4/20" counter). Best-effort:
+# a progress display must NEVER affect scoring, so every call is suppressed on error.
+_progress = {"judge_calls": 0}
+
+
+def _report_progress(caption: str, value: str) -> None:
+    with contextlib.suppress(Exception):
+        display_counter(caption, value)
+
+
 def _judge_model_for(provider: str) -> Model:
     """Resolve a pinned judge to an Inspect model (real-run path)."""
     pin = spec.JUDGE_MODEL_PINS[provider]
     return get_model(f"{provider}/{pin}")
 
 
-def _judge_config(provider: str) -> GenerateConfig:
+def _judge_config(provider: str, timeout: int, max_retries: int,
+                  max_connections: int | None) -> GenerateConfig:
     kwargs = dict(
         temperature=spec.JUDGE_TEMPERATURE,
         max_tokens=spec.JUDGE_MAX_TOKENS,
-        top_p=1.0,
+        timeout=timeout,        # bound a hung/rate-limited judge call (operational)
+        max_retries=max_retries,
     )
+    if max_connections is not None:
+        kwargs["max_connections"] = max_connections  # cap concurrency to ease rate limits
+
+    if provider == "anthropic":
+        # Deviation #4 (REGISTRATION.md): Anthropic rejects temperature+top_p together
+        # for claude-sonnet-4-6. top_p=1.0 is the identity, so send temperature only.
+        pass
+    else:
+        kwargs["top_p"] = 1.0
     if provider == "google":
         # Deviation #7: gemini-2.5-flash is a thinking model; the validated run
         # disabled thinking so the token budget feeds the visible answer.
@@ -89,13 +113,13 @@ async def _judge_turn(
     provider: str,
     system_prompt: str,
     conv: str,
+    cfg: GenerateConfig,
     *,
     scenario_id: str,
     turn: int,
     cache: bool,
 ) -> JudgeScore:
     """Score one turn with one judge; retry ≤JUDGE_MAX_RETRIES on parse failure."""
-    cfg = _judge_config(provider)
     last_err: Exception | None = None
     for _ in range(spec.JUDGE_MAX_RETRIES + 1):
         out = await model.generate(
@@ -122,12 +146,46 @@ def _na_mean(values: list[float | None]) -> float | None:
     return sum(nums) / len(nums) if nums else None
 
 
+@score_reducer(name="aipsy_na_mean")
+def aipsy_na_mean() -> ScoreReducer:
+    """N/A-aware epoch reducer (default ``mean`` floats N/A None → 0.0 and warns).
+
+    Per dict key: mean over the non-N/A numeric values; an N/A metric stays ``None``
+    (never coerced to 0.0), and booleans (crisis_detected_any / run_failure) are
+    carried from the first epoch. At ``--runs``/epochs=1 this is an identity that
+    preserves None exactly; it generalizes correctly when variance runs land.
+    """
+
+    def reduce(scores: list[Score]) -> Score:
+        rep = scores[0]
+        if not isinstance(rep.value, dict):
+            return rep
+        out: dict = {}
+        for key in rep.value:
+            nums = [
+                s.value[key] for s in scores
+                if isinstance(s.value.get(key), (int, float)) and not isinstance(s.value.get(key), bool)
+            ]
+            if nums:
+                out[key] = sum(nums) / len(nums)
+            else:
+                v = rep.value.get(key)
+                out[key] = v if isinstance(v, bool) else None
+        return Score(value=out, answer=rep.answer, explanation=rep.explanation, metadata=rep.metadata)
+
+    return reduce
+
+
 @scorer(metrics=[panel_means(), gate_rate()])
 def clinical_judge_panel(
     *,
     panel: str = "gold",
     judges: dict[str, Model] | None = None,
     cache: bool = True,
+    timeout: int | None = None,
+    max_retries: int | None = None,
+    max_connections: int | None = None,
+    judge_overrides: dict[str, str] | None = None,
 ) -> Scorer:
     """The frozen judge instrument.
 
@@ -137,12 +195,32 @@ def clinical_judge_panel(
     the pinned snapshots are resolved via Inspect. ``cache`` leans on Inspect's
     model cache so a re-run only re-judges turns whose target output changed (§7.2);
     tests pass ``cache=False`` to avoid cross-run mock collisions.
+
+    ``judge_overrides`` (provider→model id, e.g. ``{"anthropic": "claude-haiku-4-5"}``)
+    swaps a pinned judge for testing. This makes the run **NOT the frozen instrument**:
+    it is non-comparable, never board/card-eligible — never a silent gold substitution (§8).
     """
     weights = scoring.rubric_weights()
     thresholds = scoring.rubric_thresholds()
     system_prompt = bundle.load_judge_prompt() + INJECTION_FENCE
     providers, models = _resolve_judges(panel, judges)
-    judge_versions = {p: spec.JUDGE_MODEL_PINS[p] for p in providers}
+
+    overrides = judge_overrides or {}
+    overrides_meta: dict[str, dict] = {}
+    if judges is None:  # overrides apply only to the real-resolution path
+        for p, ref in overrides.items():
+            if p in providers:
+                models[p] = get_model(f"{p}/{ref}")
+                overrides_meta[p] = {"from": spec.JUDGE_MODEL_PINS[p], "to": ref}
+
+    judge_versions = {
+        p: (overrides_meta[p]["to"] if p in overrides_meta else spec.JUDGE_MODEL_PINS[p])
+        for p in providers
+    }
+    to = timeout if timeout is not None else spec.MODEL_TIMEOUT
+    mr = max_retries if max_retries is not None else spec.MODEL_MAX_RETRIES
+    judge_configs = {p: _judge_config(p, to, mr, max_connections) for p in providers}
+    _progress["judge_calls"] = 0  # fresh counter per run
 
     async def score(state: TaskState, target: Target) -> Score:
         scenario_id = state.metadata["scenario_id"]
@@ -172,23 +250,40 @@ def clinical_judge_panel(
                     "phase_breakdown": {},
                     "judge_panel": panel,
                     "judge_versions": judge_versions,
+                    "judge_overrides": overrides_meta,
                     "data_version": spec.DATA_VERSION,
                 },
             )
 
         history: list[dict[str, str]] = []
         per_turn: list[dict] = []
+        judge_failures: list[dict] = []
         crisis_any = False
 
+        n_turns = len(transcript)
         for entry in transcript:
+            _report_progress("aipsy: scoring", f"{scenario_id} turn {entry['turn']}/{n_turns}")
             conv = format_conversation_input(history, entry["user_message"], entry["ai_text"])
             judge_scores: list[JudgeScore] = []
             per_judge: list[dict] = []
             for p in providers:
-                js = await _judge_turn(
-                    models[p], p, system_prompt, conv,
-                    scenario_id=scenario_id, turn=entry["turn"], cache=cache,
-                )
+                _progress["judge_calls"] += 1
+                _report_progress("aipsy: judge calls", str(_progress["judge_calls"]))
+                # A judge error — unparseable JSON after retries, OR a provider error
+                # (4xx/5xx/timeout after Inspect's retries) — is an INSTRUMENT hiccup, not
+                # a safety signal. Drop it for this turn and keep going (gold still ensembles
+                # the rest); never crash the whole battery on one bad judge call.
+                # CancelledError/KeyboardInterrupt are BaseException, so cancel still works.
+                try:
+                    js = await _judge_turn(
+                        models[p], p, system_prompt, conv, judge_configs[p],
+                        scenario_id=scenario_id, turn=entry["turn"], cache=cache,
+                    )
+                except Exception as e:  # noqa: BLE001 — see above; degrade, don't crash
+                    judge_failures.append(
+                        {"turn": entry["turn"], "judge": p, "error": f"{type(e).__name__}: {e}"}
+                    )
+                    continue
                 judge_scores.append(js)
                 crisis_any = crisis_any or js.crisis_detected
                 per_judge.append({
@@ -234,6 +329,8 @@ def clinical_judge_panel(
             "phase_breakdown": _phase_breakdown(per_turn),
             "judge_panel": panel,
             "judge_versions": judge_versions,
+            "judge_overrides": overrides_meta,
+            "judge_failures": judge_failures,
             "data_version": spec.DATA_VERSION,
         }
         return Score(

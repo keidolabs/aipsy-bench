@@ -26,7 +26,8 @@ uv sync
 # Fully offline self-test — no API keys, mock target + mock judges:
 uv run aipsy-bench run --target mock --quick
 
-# A real foundational model (needs the provider key, e.g. ANTHROPIC_API_KEY):
+# A real foundational model — install the provider SDK extras first, then set a key:
+uv sync --all-extras      # or: uv sync --extra openai/anthropic/google
 uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --judges single --quick
 
 # The full, comparable run (3-judge gold panel, all 20 scenarios):
@@ -50,6 +51,70 @@ the remediation cards), and a share `card.svg`/`card.png` + `badge.svg` (skip wi
 - `--baseline-prompt` — inject the 014 baseline system prompt to reproduce the published
   frontier baseline. **By default the target keeps its own system prompt** (the bot as
   deployed); aipsy-bench sends only the scripted user turns.
+- `--judge-override anthropic=claude-haiku-4-5` — swap a pinned judge for a cheaper one
+  while iterating (repeatable). The judge pins are frozen, so this **makes the run
+  non-comparable** — not the frozen instrument, not board/card eligible, loudly warned (§8).
+  Never use it for a number you'll cite. (Set once in `aipsy-bench.yaml` via
+  `judge_overrides: {anthropic: claude-haiku-4-5}`.)
+
+### Long / real runs (timeouts, interrupting, resuming)
+
+A `gold` battery is ~800 calls — `--dry-run` first to see the estimate. Calls are bounded
+so a hung or rate-limited provider can't stall forever:
+
+- `--timeout <seconds>` (default 120) — per-call timeout; a stuck call fails and that
+  scenario is reported as a **run failure** (never a low safety score).
+- `--max-retries <n>` (default 3) — bounds rate-limit backoff (which can otherwise look
+  like a hang). A whole battery never aborts on one bad scenario — it's logged and the rest
+  still score.
+- `--max-connections <n>` — cap concurrent calls per provider. **Rate-limited?** Lower it
+  (e.g. `2`–`4`) — fewer parallel calls means fewer 429s and a more complete run. (Running a
+  model as both target *and* a judge doubles that provider's load, so it rate-limits first.)
+- **Interrupt with `Ctrl+C`** (bounded by `--timeout`, so it stops promptly), then
+  **`--resume <run_id>`** continues without re-doing completed work. Live progress shows
+  `aipsy: judge calls` / `aipsy: scoring` counters; if the terminal UI feels heavy, add
+  `--display plain`.
+
+The footer counters like `openai 5/5 · anthropic 14/40 · google 0/20` are Inspect's
+**per-provider in-flight / pool-size gauges** (live concurrency), not call totals — unequal
+and fluctuating is normal. A rate-limited / target-doubling provider stays saturated while
+an idle one reads `0/n`. All turns are still judged by every panel member.
+
+## API keys (your keys, your cost)
+
+aipsy-bench uses **your** provider keys, read from the environment — it never stores,
+transmits, or proxies them, so the provider bills you directly. `--target mock` and the
+test suite need **no keys** (fully offline); a real run needs a key per judge in the panel.
+
+| Panel | Keys needed |
+|---|---|
+| `--judges single` (default) | `OPENAI_API_KEY` |
+| `--judges gold` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` |
+
+Set them the friendly way (interactive, input hidden, written to a gitignored `.env`):
+
+```bash
+aipsy-bench keys set                # pick a provider, paste the key, done
+aipsy-bench keys set --provider openai
+aipsy-bench keys status             # which keys are present (never prints values)
+```
+
+…or do it by hand — a project `.env` (auto-loaded; **gitignored**) or exported shell
+vars (which take precedence):
+
+```bash
+cp .env.example .env       # then fill in your keys
+# or:  export OPENAI_API_KEY=sk-...
+
+aipsy-bench doctor --judges gold   # preflight: which keys are present, data SHA, config
+```
+
+`keys set` only writes to your local `.env` — aipsy-bench never stores, transmits, or
+proxies your keys.
+
+`doctor` reads the same `.env` a real run will, so it tells you exactly what's set before
+you spend anything. (Enterprises can route the pinned judges through their own Azure /
+Vertex / gateway via base-URL overrides — a later iteration.)
 
 ## What a score means
 

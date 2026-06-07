@@ -5,11 +5,56 @@ from __future__ import annotations
 from fixtures import mock_judge_model, mock_target_model
 from inspect_ai import Task
 from inspect_ai import eval as inspect_eval
+from inspect_ai.model import ModelOutput, get_model
 
 from aipsy_bench import spec
 from aipsy_bench.dataset import build_dataset
 from aipsy_bench.scorer import clinical_judge_panel
 from aipsy_bench.solver import scripted_dialogue
+
+
+def _broken_judge():
+    """A judge that always returns unparseable output (real models occasionally do)."""
+    def _outputs(messages, tools, tool_choice, config):
+        return ModelOutput.from_content(model="mockllm/judge", content="sorry, no JSON here at all.")
+    return get_model("mockllm/model", custom_outputs=_outputs)
+
+
+def _erroring_judge():
+    """A judge whose call RAISES a provider error (e.g. a 400/timeout after retries)."""
+    def _outputs(messages, tools, tool_choice, config):
+        raise RuntimeError("400 BadRequest: temperature and top_p cannot both be specified")
+    return get_model("mockllm/model", custom_outputs=_outputs)
+
+
+def test_judge_config_omits_top_p_for_anthropic():
+    # Deviation #4: Anthropic rejects temperature+top_p together for claude-sonnet-4-6.
+    from aipsy_bench.scorer import _judge_config
+
+    a = _judge_config("anthropic", 120, 3, None)
+    assert a.top_p is None
+    assert a.temperature == spec.JUDGE_TEMPERATURE
+    assert _judge_config("openai", 120, 3, None).top_p == 1.0
+    g = _judge_config("google", 120, 3, None)
+    assert g.top_p == 1.0
+    assert g.reasoning_tokens == spec.GEMINI_THINKING_BUDGET
+    assert _judge_config("openai", 120, 3, 4).max_connections == 4
+
+
+def test_judge_provider_error_degrades_not_crashes(tmp_path):
+    # a judge whose call raises (provider 4xx/5xx/timeout) must degrade like a parse
+    # failure — recorded, that turn dropped, battery continues, never crashes.
+    task = Task(
+        dataset=build_dataset(scenario_ids=["s01"]),
+        solver=scripted_dialogue(),
+        scorer=clinical_judge_panel(panel="single", judges={"openai": _erroring_judge()}, cache=False),
+    )
+    log = inspect_eval(task, model=mock_target_model("safe"), display="none",
+                       log_dir=str(tmp_path / "logs"), fail_on_error=False)[0]
+    assert log.status == "success"
+    score = log.samples[0].scores["clinical_judge_panel"]
+    assert score.metadata["judge_failures"]
+    assert all(score.value[m] is None for m in spec.METRICS)
 
 _PANEL_PROVIDERS = {"single": ["openai"], "gold": list(spec.PROVIDERS)}
 
@@ -85,6 +130,57 @@ def test_failing_target_fails_gate(tmp_path):
     from aipsy_bench import scoring
     metric_scores = {m: score.value[m] for m in spec.METRICS}
     assert scoring.is_failure(metric_scores, score.value["AI_Trust"], scoring.rubric_thresholds())
+
+
+def test_na_reducer_avoids_convert_warning_and_preserves_na(tmp_path, monkeypatch):
+    # the default epoch reducer floats N/A None → 0.0 and logs "Unable to convert value
+    # to float: None". Our aipsy_na_mean reducer keeps N/A as None and never warns.
+    import inspect_ai.scorer._metric as _metric
+
+    from aipsy_bench.task import aipsy_bench
+
+    warns: list[str] = []
+    monkeypatch.setattr(_metric.logger, "warning", lambda msg, *a, **k: warns.append(str(msg)))
+
+    log = inspect_eval(
+        aipsy_bench(target="mock", judges="gold", scenario_ids=["s01"]),
+        model=mock_target_model("safe"), display="none", log_dir=str(tmp_path / "logs"),
+    )[0]
+    assert not [w for w in warns if "Unable to convert" in w]
+    score = log.samples[0].scores["clinical_judge_panel"]
+    assert score.value["crisis_handling"] is None  # N/A preserved, not coerced to 0.0
+    assert isinstance(score.value["empathy"], float)
+
+
+def test_judge_parse_failure_degrades_not_crashes(tmp_path):
+    # the only judge always fails to parse → the run COMPLETES (no crash); failures are
+    # recorded; the affected turns are unscored (None), never scored as unsafe (§ quality bar).
+    task = Task(
+        dataset=build_dataset(scenario_ids=["s01"]),
+        solver=scripted_dialogue(),
+        scorer=clinical_judge_panel(panel="single", judges={"openai": _broken_judge()}, cache=False),
+    )
+    log = inspect_eval(task, model=mock_target_model("safe"), display="none", log_dir=str(tmp_path / "logs"))[0]
+    assert log.status == "success"  # did NOT crash the battery
+    score = log.samples[0].scores["clinical_judge_panel"]
+    assert score.metadata["judge_failures"]  # recorded
+    assert all(score.value[m] is None for m in spec.METRICS)  # unscored, not low
+    assert score.value["AI_Trust"] is None
+
+
+def test_gold_degrades_when_one_judge_fails(tmp_path):
+    # one broken judge + two good → the ensemble still scores from the two good ones
+    judges = {"openai": mock_judge_model(), "anthropic": mock_judge_model(), "google": _broken_judge()}
+    task = Task(
+        dataset=build_dataset(scenario_ids=["s01"]),
+        solver=scripted_dialogue(),
+        scorer=clinical_judge_panel(panel="gold", judges=judges, cache=False),
+    )
+    log = inspect_eval(task, model=mock_target_model("safe"), display="none", log_dir=str(tmp_path / "logs"))[0]
+    score = log.samples[0].scores["clinical_judge_panel"]
+    assert score.value["empathy"] is not None  # scored from the 2 working judges
+    assert any(jf["judge"] == "google" for jf in score.metadata["judge_failures"])
+    assert len(score.metadata["per_turn"][0]["per_judge"]) == 2  # broken judge dropped for the turn
 
 
 def test_adversarial_target_not_inflated(tmp_path):
