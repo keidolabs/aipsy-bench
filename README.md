@@ -10,13 +10,15 @@ scenarios + a 6-metric rubric + the judge prompt — is verbatim from the 014 re
 experiment. The engine is [Inspect AI](https://inspect.aisi.org.uk/); we ship a Task, a
 Solver, and a Scorer, not a new runner.
 
-> ## ⚠ PROVISIONAL — instrument not yet human-validated
+> ## ⚠ DIRECTIONAL — a recommendation, not a rubber-stamp
 > The premise is "the judge panel is validated against human clinical experts." That
-> validation (014's human-vs-judge agreement study) is **in progress**. Until its gate
-> artifact lands, aipsy-bench runs and scores freely but every score is marked
-> **provisional**: scores are *descriptive only*, **no per-metric agreement number is
-> claimed**, and **no metric can fail the CI gate** (a metric gates the build only once 014
-> has licensed it). Do not cite these as validated agreement.
+> validation (014's human-vs-judge agreement study) is **running in parallel** and has not yet
+> landed. So aipsy-bench ships now as a **directional, methodology-transparent, reproducible**
+> reading — *run it yourself to reproduce* — not an authoritative, human-validated safety
+> rating. The **CI gate is functional**: a metric fails the build against the thresholds *you*
+> set (your policy, not a validated rating). But **no validated per-metric agreement (α) number
+> is claimed** until the study lands — don't cite these as validated agreement. When it lands,
+> the directional reading *upgrades* to validated authority.
 
 ## Quickstart
 
@@ -26,25 +28,47 @@ uv sync
 # Fully offline self-test — no API keys, mock target + mock judges:
 uv run aipsy-bench run --target mock --quick
 
-# A real foundational model — install the provider SDK extras first, then set a key:
-uv sync --all-extras      # or: uv sync --extra openai/anthropic/google
-uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --judges single --quick
+# Set up the LOCAL judge (the default): a fine-tuned model served by Ollama, so the whole
+# benchmark runs 100% locally — no API key, no network. Needs Ollama running + HF_TOKEN.
+uv sync --extra local
+uv run aipsy-bench judge pull          # downloads the FT GGUF from HF, registers the Ollama tag
+uv run aipsy-bench judge status        # verify Ollama + the model are ready
 
-# The full, comparable run (3-judge gold panel, all 20 scenarios):
+# Run any target, judged locally (free). Only the TARGET may need a key:
+uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --quick
+
+# Prefer the frontier judges (the official/citable lane)? Install the SDKs + keys:
+uv sync --all-extras                   # or: uv sync --extra openai/anthropic/google
 uv run aipsy-bench run --model openai/gpt-5.4-mini --judges gold
 
 # Browse the public benchmark content:
 uv run aipsy-bench scenarios list
 ```
 
+> **The local judge is a different instrument than the frontier gold panel.** A local score
+> is comparable to other local runs only, never to gold — the two are separate lanes. See
+> [docs/local-judge.md](docs/local-judge.md) for setup, hardware requirements, and the
+> directional positioning.
+>
+> **Hardware:** the Q8_0 model is ~29 GB resident. Recommended: a **48 GB+ unified-memory Mac**,
+> or a **Linux box with ≥16 GB VRAM + ≥64 GB RAM** (discrete-GPU offload). A 32–36 GB Mac works
+> but is slow (~5 min/turn) and needs the Metal wired-limit raised — see the docs.
+
 Each run writes `result.json` (citable, self-describing), `report.txt` (human-readable, with
 the remediation cards), and a share `card.svg`/`card.png` + `badge.svg` (skip with `--no-card`).
 
 ### Run profiles
 
-- `--judges single` (default) — the primary judge only. Fast inner loop for iterating on a
-  prompt. **NOT comparable to published gold numbers.**
-- `--judges gold` — the 3-judge ensemble. Comparable, citable, drives the badge/leaderboard.
+- `--judges local` (**default**) — the offline fine-tuned judge (`gemma4-judge-ft-v3`) served
+  by Ollama. No API key, no network (needs a 48 GB+ Mac or a 16 GB-VRAM/64 GB-RAM Linux box —
+  see [docs/local-judge.md](docs/local-judge.md)). Its **own comparability lane** —
+  comparable to other local runs, **never to gold**. Directional by construction and
+  human-in-the-loop (strongest on crisis/empathy/boundary; advice is the lowest-confidence
+  axis — treat advice flags as flag-for-review). See [docs/local-judge.md](docs/local-judge.md).
+- `--judges gold` — the 3-judge frontier ensemble (the official/citable lane). Comparable,
+  drives the frontier badge/leaderboard. Needs all three provider keys.
+- `--judges single` — the primary frontier judge only. Fast inner loop; **NOT comparable** to
+  the gold or local lanes.
 - `--quick` — smoke subset (one scenario per domain + both crisis scenarios). Directional
   only; never feeds a card or the leaderboard.
 - `--scenario s06,s07` — run a subset.
@@ -83,13 +107,18 @@ an idle one reads `0/n`. All turns are still judged by every panel member.
 ## API keys (your keys, your cost)
 
 aipsy-bench uses **your** provider keys, read from the environment — it never stores,
-transmits, or proxies them, so the provider bills you directly. `--target mock` and the
-test suite need **no keys** (fully offline); a real run needs a key per judge in the panel.
+transmits, or proxies them, so the provider bills you directly. `--target mock`, the test
+suite, and **the default local judge** need **no provider keys** (the local judge runs
+offline on Ollama); the frontier panels need a key per judge.
 
 | Panel | Keys needed |
 |---|---|
-| `--judges single` (default) | `OPENAI_API_KEY` |
+| `--judges local` (**default**) | none to run; `HF_TOKEN` once for `judge pull` (private repo) |
+| `--judges single` | `OPENAI_API_KEY` |
 | `--judges gold` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` |
+
+A real target may still need its own provider key even with the local judge (only the *judge*
+is local). Set `HF_TOKEN` (for `judge pull`) the same way as the provider keys below.
 
 Set them the friendly way (interactive, input hidden, written to a gitignored `.env`):
 

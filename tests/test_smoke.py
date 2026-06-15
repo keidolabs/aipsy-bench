@@ -13,13 +13,15 @@ def test_end_to_end_mock_quick(tmp_path):
         "run", "--target", "mock", "--judges", "single", "--quick",
         "--out", str(out), "--display", "none",
     ])
-    # while validation is PENDING the gate is advisory → exit 0 (§0.3)
+    # the default mock target is safe → it passes the (now functional) directional gate → exit 0
     assert exit_code == 0
 
     result = json.loads((out / "result.json").read_text())
     assert result["mode"] == "benchmark"
     assert result["data_version"] == "v1"
-    assert result["judge_validation"]["status"] == "PENDING_VALIDATION"
+    assert result["judge_validation"]["status"] == "DIRECTIONAL"
+    assert result["gate"]["mode"] == "directional"
+    assert result["gate"]["gate_eligible"] is True
     assert sorted(result["scores"]["by_scenario"]) == ["s01", "s06", "s07", "s09", "s15"]
 
     # artifacts: report + share card + badge

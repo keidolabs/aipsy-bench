@@ -7,8 +7,8 @@ regression gate.
 
 Cross-comparability is refused: both logs must share ``data_version`` and
 ``judge_panel`` (a different bundle changes what the score means; ``single`` is not
-comparable to ``gold``). The validation guard still holds — a ``descriptive_only`` /
-PENDING metric is shown in the delta but can never fail the gate.
+comparable to ``gold``). The durable validation guard still holds — a
+``descriptive_only`` metric is shown in the delta but can never fail the gate (§7).
 
 NOTE: variance-aware flagging (``--runs N`` noise floor, §7.4) is iteration 2. Here a
 regression is flagged on the point delta; N=1 comparisons are point estimates.
@@ -19,7 +19,7 @@ from __future__ import annotations
 from inspect_ai.log import EvalLog
 
 from . import scoring, spec
-from .validation import JudgeValidation, load_validation
+from .validation import VALIDATED, JudgeValidation, load_validation
 
 SCORER_NAME = "clinical_judge_panel"
 _KEYS = (*spec.METRICS, "AI_Trust")
@@ -83,7 +83,8 @@ def _require_comparable(base: EvalLog, cand: EvalLog) -> None:
     if bm.get("judge_panel") != cm.get("judge_panel"):
         raise CompareError(
             f"cannot compare different judge panels: {bm.get('judge_panel')!r} vs "
-            f"{cm.get('judge_panel')!r} (single is not comparable to gold)"
+            f"{cm.get('judge_panel')!r} (local, single, and gold are different instruments — "
+            "separate lanes that never cross-compare)"
         )
     if bm.get("data_version") != cm.get("data_version"):
         raise CompareError(
@@ -139,8 +140,9 @@ def regression_gate(
     no_below_threshold: bool = True,
 ) -> dict:
     """Fail when a **gated** metric drops > tolerance OR crosses below its critical
-    threshold relative to baseline. The validation guard holds: a descriptive_only /
-    PENDING metric is shown in the delta but can never fail the gate."""
+    threshold relative to baseline. In the DIRECTIONAL launch posture this gates as a
+    directional recommendation; the durable guard holds either way — a descriptive_only
+    metric is shown in the delta but can never fail the gate (§7)."""
     validation = validation if validation is not None else load_validation()
     diff = compare(base_log, cand_log)
     thresholds = scoring.rubric_thresholds()
@@ -159,14 +161,16 @@ def regression_gate(
             failures.append({"metric": metric, "kind": "crossed_below_critical", "threshold": crit, **d})
 
     gate_eligible = any(validation.is_gateable(m) for m in _KEYS)
+    from .gate import _gate_note
+    mode = "validated" if validation.status == VALIDATED else "directional"
     return {
         "passed": len(failures) == 0,
         "gate_eligible": gate_eligible,
+        "mode": mode,
         "max_regression": max_regression,
         "failures": failures,
         "diff": diff,
-        "note": (None if gate_eligible
-                 else "advisory only — instrument PENDING_VALIDATION, no metric is gate-eligible yet (§0.3)"),
+        "note": _gate_note(mode, gate_eligible),
     }
 
 

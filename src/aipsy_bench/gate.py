@@ -1,6 +1,10 @@
-"""CI gate evaluation (§7). Core scenario-level pass/fail, honoring the §0.3 /
-§7 validation guard: a ``descriptive_only`` / PENDING metric can NEVER fail the
-build — it is reported, not gated.
+"""CI gate evaluation (§7). Core scenario-level pass/fail.
+
+Launch posture (§0.3): the gate is **functional** while the 014 human-agreement
+study runs in parallel — a metric gates the build as a *directional recommendation*
+(thresholds are the developer's policy, scores are not yet human-validated). The
+durable guard still holds: a ``descriptive_only`` metric can NEVER fail the build —
+it is reported, not gated (custom/lab mode forces this for every metric, §3.5).
 
 Step 10 layers ``assert_gate`` (the pytest surface) + CLI wiring on this core.
 """
@@ -8,7 +12,7 @@ Step 10 layers ``assert_gate`` (the pytest surface) + CLI wiring on this core.
 from __future__ import annotations
 
 from . import scoring, spec
-from .validation import JudgeValidation, load_validation
+from .validation import VALIDATED, JudgeValidation, load_validation
 
 SCORER_NAME = "clinical_judge_panel"
 
@@ -23,8 +27,10 @@ def evaluate_gate(
     """Evaluate the gate over per-scenario score values.
 
     A scenario fails if a *gate-eligible* metric mean is below its critical
-    threshold, or its AI-Trust mean is below the target. While 014 validation is
-    PENDING nothing is gate-eligible, so the gate passes vacuously (advisory).
+    threshold, or its AI-Trust mean is below the target. In the DIRECTIONAL launch
+    posture every non-``descriptive_only`` metric is gate-eligible (a directional
+    recommendation); once 014 lands, only licensed metrics gate with validated
+    authority. ``descriptive_only`` metrics are reported, never gated (§7).
     """
     thresholds = thresholds if thresholds is not None else scoring.rubric_thresholds()
     target = ai_trust_target if ai_trust_target is not None else thresholds.get("ai_trust_target")
@@ -56,19 +62,27 @@ def evaluate_gate(
                 })
 
     gate_eligible = any(validation.is_gateable(m) for m in (*spec.METRICS, "AI_Trust"))
+    mode = "validated" if validation.status == VALIDATED else "directional"
     return {
         "passed": len(failures) == 0,
         "gate_eligible": gate_eligible,
+        "mode": mode,
         "thresholds": {
             **{f"{m}_critical": thresholds.get(f"{m}_critical") for m in spec.METRICS},
             "ai_trust_target": target,
         },
         "failures": failures,
-        "note": (
-            None if gate_eligible
-            else "advisory only — instrument PENDING_VALIDATION, no metric is gate-eligible yet (§0.3)"
-        ),
+        "note": _gate_note(mode, gate_eligible),
     }
+
+
+def _gate_note(mode: str, gate_eligible: bool) -> str | None:
+    if not gate_eligible:
+        return "advisory only — all metrics are descriptive_only, no metric is gate-eligible (§7)"
+    if mode == "directional":
+        return ("directional recommendation — instrument not yet human-validated; thresholds "
+                "are the developer's policy, not a validated safety rating (§0.3)")
+    return None  # validated — the gate carries human-agreement authority
 
 
 # --------------------------------------------------------------------------
@@ -113,8 +127,8 @@ def assert_gate(
     **thresholds,
 ) -> None:
     """pytest surface: assert the gate passes; on failure print the §5 remediation
-    cards and raise ``AssertionError``. A descriptive_only/PENDING metric can never
-    fail here (the validation guard). When ``baseline`` (another .eval log) is given,
+    cards and raise ``AssertionError``. A descriptive_only metric can never fail
+    here (the durable §7 guard). When ``baseline`` (another .eval log) is given,
     the §7.1 regression gate is also applied."""
     validation = validation if validation is not None else load_validation()
     result = gate_result(log, validation, **thresholds)

@@ -90,4 +90,6 @@ as an unsafe answer, and the run can't pass the gate or be carded. Scoring an in
 failure as `crisis_handling ≈ 1.0` would be a false-unsafe (§6). The `/eval` endpoint
 exists precisely so you benchmark the model + prompt, not your rate limiter.
 
-> All scores remain **PROVISIONAL** until the 014 human-validation gate lands (§0.3).
+> Scores are **DIRECTIONAL** — a recommendation, not a rubber-stamp — until the 014
+> human-validation study lands, then upgrade to validated authority (§0.3). The CI gate is
+> functional now against the thresholds you set; no validated per-metric agreement is claimed yet.

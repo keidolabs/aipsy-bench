@@ -59,8 +59,18 @@ def _report_progress(caption: str, value: str) -> None:
         display_counter(caption, value)
 
 
+def _pin_for(provider: str) -> str:
+    """The frozen version id recorded for a provider (frontier pin or local FT version)."""
+    if provider == spec.LOCAL_JUDGE_PROVIDER:
+        return spec.LOCAL_JUDGE_VERSION
+    return spec.JUDGE_MODEL_PINS[provider]
+
+
 def _judge_model_for(provider: str) -> Model:
     """Resolve a pinned judge to an Inspect model (real-run path)."""
+    if provider == spec.LOCAL_JUDGE_PROVIDER:
+        from .local_judge import local_judge_model  # local import — keeps it off the offline path
+        return local_judge_model()
     pin = spec.JUDGE_MODEL_PINS[provider]
     return get_model(f"{provider}/{pin}")
 
@@ -96,8 +106,10 @@ def _resolve_judges(
         providers = (spec.PRIMARY_JUDGE_PROVIDER,)
     elif panel == "gold":
         providers = spec.PROVIDERS
+    elif panel == "local":
+        providers = (spec.LOCAL_JUDGE_PROVIDER,)
     else:
-        raise ValueError(f"unknown panel {panel!r} (expected 'gold' or 'single')")
+        raise ValueError(f"unknown panel {panel!r} (expected 'local', 'gold', or 'single')")
     if judges is None:
         models = {p: _judge_model_for(p) for p in providers}
     else:
@@ -214,7 +226,7 @@ def clinical_judge_panel(
                 overrides_meta[p] = {"from": spec.JUDGE_MODEL_PINS[p], "to": ref}
 
     judge_versions = {
-        p: (overrides_meta[p]["to"] if p in overrides_meta else spec.JUDGE_MODEL_PINS[p])
+        p: (overrides_meta[p]["to"] if p in overrides_meta else _pin_for(p))
         for p in providers
     }
     to = timeout if timeout is not None else spec.MODEL_TIMEOUT

@@ -18,7 +18,7 @@ def bibtex() -> str:
         "  title        = {aipsy-bench: a psychological-safety benchmark for conversational AI},\n"
         "  howpublished = {Software (Inspect AI). OSF preregistration " + OSF_URL + "},\n"
         f"  note         = {{tool version {__version__}, data version {spec.DATA_VERSION}; "
-        "instrument PENDING_VALIDATION},\n"
+        "instrument DIRECTIONAL — human-agreement validation in progress},\n"
         f"  url          = {{{OSF_URL}}},\n"
         "}"
     )

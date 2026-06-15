@@ -32,7 +32,7 @@ def test_render_card_svg_and_png(tmp_path):
     assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
     at = result["scores"]["overall"]["AI_Trust"]
     assert f"{at:.1f}" in svg
-    assert "PROVISIONAL" in svg  # provisional banner while PENDING (§0.3)
+    assert "DIRECTIONAL" in svg  # directional banner until 014 lands (§0.3)
     assert "aipsy-bench run --model" in svg  # reproduce command
     assert "og:title" in svg  # OG meta present
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
@@ -73,7 +73,7 @@ def test_board_row_schema_and_eligibility(tmp_path):
     row = rows[0]
     assert set(row.scores) == {*spec.METRICS, "AI_Trust"}
     assert row.judge_panel == "gold"
-    assert row.judge_validation_status == "PENDING_VALIDATION"
+    assert row.judge_validation_status == "DIRECTIONAL"
 
 
 def test_single_and_partial_runs_excluded_from_board(tmp_path):

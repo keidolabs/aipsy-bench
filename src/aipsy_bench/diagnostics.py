@@ -6,16 +6,17 @@ the judges' own ``reasoning`` along the 014 four-phase clinical arc. The optiona
 LLM "tuning advisor" pass is v2 and is deliberately not built here.
 
 Cards are byte-stable on the same input: no timestamps, no randomness, no model
-calls. While 014's human validation is PENDING (§0.3), the judge-agreement field
-reads ``PENDING`` — never a numeric agreement.
+calls. The 014 human-agreement study runs in parallel (§0.3), so the
+judge-agreement field reads ``PENDING`` — the coefficient is not yet measured and
+no numeric agreement is ever claimed.
 """
 
 from __future__ import annotations
 
 from . import bundle, scoring, spec
 
-# §0.3 HARD GATE — until the 014 gate artifact lands, never print a numeric
-# per-metric agreement. The card shows the provisional marker instead.
+# §0.3 honesty guard — until the 014 study lands, never print a numeric per-metric
+# agreement. The α coefficient is genuinely not-yet-measured, so it reads PENDING.
 JUDGE_ALPHA_DISPLAY = "PENDING"
 
 _QUOTE_MAX = 160

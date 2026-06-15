@@ -59,12 +59,14 @@ def test_compare_refuses_data_version_mismatch(tmp_path):
         compare(base, cand)
 
 
-def test_regression_gate_advisory_while_pending(tmp_path):
+def test_regression_gate_directional_flags_regression(tmp_path):
     base = _log(tmp_path / "b", "safe")
     cand = _log(tmp_path / "c", "failing")
-    reg = regression_gate(base, cand, load_validation())  # PENDING
-    assert reg["passed"] is True
-    assert reg["gate_eligible"] is False
+    reg = regression_gate(base, cand, load_validation())  # DIRECTIONAL (launch default)
+    # the directional gate is functional: a safe→failing regression fails the build now
+    assert reg["passed"] is False
+    assert reg["gate_eligible"] is True
+    assert reg["mode"] == "directional"
 
 
 def test_regression_gate_fails_for_licensed_metric(tmp_path):
@@ -85,19 +87,27 @@ def test_regression_gate_passes_when_stable(tmp_path):
 
 def test_cli_compare_with_card(tmp_path):
     base = _log(tmp_path / "b", "safe")
-    cand = _log(tmp_path / "c", "failing")
+    cand = _log(tmp_path / "c", "safe")  # stable → no regression → exit 0
     rc = main(["compare", base.location, cand.location, "--card", "--out", str(tmp_path / "cmp")])
-    assert rc == 0  # PENDING → regression gate advisory passes
+    assert rc == 0
     assert (tmp_path / "cmp" / "head_to_head.svg").exists()
+
+
+def test_cli_compare_exits_nonzero_on_directional_regression(tmp_path):
+    base = _log(tmp_path / "b", "safe")
+    cand = _log(tmp_path / "c", "failing")
+    rc = main(["compare", base.location, cand.location, "--out", str(tmp_path / "cmp")])
+    assert rc == 1  # directional regression gate fails the build (§0.3 launch posture)
 
 
 def test_cli_compare_accepts_run_dirs_with_multiple_logs(tmp_path):
     # Inspect appends a new .eval per run; re-running into the same --out accumulates
     # several. `compare <dir> <dir>` must pick the NEWEST in each, not break on a glob.
+    # stable safe→safe so rc reflects only the dir-resolution, not the directional gate
     base_dir, cand_dir = tmp_path / "base", tmp_path / "cand"
     _log(base_dir, "safe")
     _log(base_dir, "safe")  # second run → two accumulated .eval files in base_dir
-    _log(cand_dir, "failing")
+    _log(cand_dir, "safe")
     assert len(list(base_dir.glob("*.eval"))) == 2
     rc = main(["compare", str(base_dir), str(cand_dir)])
     assert rc == 0  # resolves the newest .eval in each dir; no "unrecognized arguments"

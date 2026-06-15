@@ -103,6 +103,56 @@ API_ENV_VARS = {
 }
 
 # --------------------------------------------------------------------------
+# Local judge — the offline, self-contained DEFAULT panel (exp 016-local-judge).
+# A fine-tuned, frozen local instrument: a LoRA-SFT of gemma4-26b distilled toward
+# the clinician-corrected reweighted target (016 STEP3 §Results — composite ICC
+# 0.64→0.75, crisis κ 0.66→0.82, empathy 0.50→0.71, 99.7% clean). It runs via a
+# local Ollama server, so the whole pipeline is 100% local — no API key, no network
+# — which is why it is the default panel.
+#
+# It is a DIFFERENT instrument than the frontier gold/single panels: a local score
+# is comparable to other local runs only (namespaced by ``judge_panel``), NEVER to
+# gold. It is directional BY CONSTRUCTION (anchored to the single-rater-informed
+# reweighted target, not the validated 2-rater ground truth) — strong on
+# crisis/empathy/boundary, noisiest on the advice axis (STEP3 §Fit-for-purpose).
+# See validation.local_judge_banner for the positioning text.
+#
+# Pins are frozen (a judge change = a different score meaning):
+LOCAL_JUDGE_PROVIDER = "local"                        # pseudo-provider key in the panel
+LOCAL_JUDGE_TAG = "gemma4-judge-ft"                   # the Ollama tag we create/serve (== 015)
+LOCAL_JUDGE_VERSION = "gemma4-judge-ft-v3"            # frozen FT version (judge_versions/provenance)
+LOCAL_JUDGE_HF_REPO = "keidolabs/gemma4-judge-ft-v3"  # weights backup (private for now)
+LOCAL_JUDGE_GGUF = "gguf/gemma4-judge-ft-v3-q8.gguf"  # the servable blob in the HF repo
+LOCAL_JUDGE_MODELFILE = "gguf/Modelfile"             # the Ollama serving recipe in the HF repo
+# Serving quant is REQUIRED to be Q8_0: the FT's sharp low-loss weights truncate
+# ~16% of outputs under PTQ-Q4_K_M (early-EOS mid-JSON); Q8_0 re-scores 99.7% clean
+# (STEP3 §Serving / memory ``project_ft_judge_needs_q8_serving``).
+LOCAL_JUDGE_QUANT = "Q8_0"
+# Recorded for provenance/audit (the published GGUF's git-lfs sha256). NOT verified
+# at runtime — the blob is ~26.9 GB; ``judge status`` checks the served Ollama tag.
+LOCAL_JUDGE_GGUF_SHA256 = "9c38ef16028a8782d69e605300e40d51224e5b881fc14746f12b5afe84f4cf7d"
+LOCAL_JUDGE_RAM_GB = 27               # ~26.9 GB weights (~29 GB resident with the 8k KV cache)
+# Recommended unified memory: below this the model can't sit 100% on the accelerator alongside
+# the OS, so it spills to CPU and is slow (a 32–36 GB Mac works but needs the Metal wired-limit
+# raised — see docs/local-judge.md). A discrete-GPU Linux box (≥16 GB VRAM + ≥64 GB RAM) is fine.
+LOCAL_JUDGE_RAM_RECOMMENDED_GB = 48
+# Inference contract — replicate the 016/015 served path (open_judges.py
+# OllamaProvider.complete): system+user roles (the gemma4 renderer handles system),
+# num_ctx 8192 (the judge prompt is ~5k tokens; a smaller ctx truncates the rubric),
+# seed 14 for reproducibility, thinking disabled. temperature/max_tokens come from the
+# frozen JUDGE_* constants below (a call-time override of the Modelfile's defaults).
+OLLAMA_BASE_URL = "http://localhost:11434"
+LOCAL_JUDGE_NUM_CTX = 8192
+LOCAL_JUDGE_SEED = 14
+# The frontier per-call timeout (120s) is far too short for a local 26B model: the cold
+# load alone (paging ~27 GB into memory) can exceed it, and warm generation is slower than
+# a frontier API. Floor the local judge's per-call timeout here; `keep_alive` keeps the
+# model resident across the battery so only the FIRST call pays the load (the run preflight
+# warms it up). Overridable upward via --timeout.
+LOCAL_JUDGE_TIMEOUT = 600
+LOCAL_JUDGE_KEEP_ALIVE = "30m"
+
+# --------------------------------------------------------------------------
 # Four-phase clinical arc — 014 prereg §5. Disclosure 1–3, Pressure 4–5,
 # Deepening 6–7, Resolution 8–10. Drives the §5 diagnostic phase-localization.
 # --------------------------------------------------------------------------

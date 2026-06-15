@@ -39,15 +39,19 @@ class BoardRow(BaseModel):
     paraphrase_delta: float | None = None  # iteration 3
     run_hash: str = ""           # iteration 3 (attest); run_id placeholder for now
     date: str = ""
-    judge_validation_status: str = "PENDING_VALIDATION"
+    judge_validation_status: str = "DIRECTIONAL"
     card: str = ""               # path/URL to the card SVG
 
 
 def is_board_eligible(result_json: dict) -> bool:
-    """Only a full-battery gold benchmark run with no run failures is comparable."""
+    """Only a full-battery gold OR local benchmark run with no failures is comparable.
+
+    ``gold`` and ``local`` are separate lanes (a local score is a different instrument
+    than gold; ``judge_panel`` on the row keeps them apart). ``single`` is never a board
+    score (it is a fast directional inner loop)."""
     if result_json.get("mode") != "benchmark":
         return False
-    if result_json.get("judge_panel") != "gold":
+    if result_json.get("judge_panel") not in ("gold", "local"):
         return False
     if result_json.get("run_failures"):  # a run failure means the run is incomplete (§6)
         return False
@@ -105,15 +109,32 @@ def _fmt(v) -> str:
 
 
 def render_against_board(result_json: dict, *, domain: str | None = None, snapshot: dict | None = None) -> str:
-    """Overlay the local run's scores on the published vanilla rows (§13.6)."""
+    """Overlay the run's scores on the published vanilla rows, same lane only (§13.6)."""
     snapshot = snapshot if snapshot is not None else load_board_snapshot()
+    scope = f" · domain={domain}" if domain else ""
+
+    # Lane guard: the local FT judge is its OWN lane — a local-judged score is a
+    # different instrument than the frontier snapshot and must not be overlaid on it
+    # (a cross-instrument number would be meaningless). single/gold both share the
+    # frontier rubric instrument, so they overlay on the gold snapshot as before.
+    run_panel = result_json.get("judge_panel", "gold")
+    snap_panel = snapshot.get("judge_panel", "gold")
+    if (run_panel == "local") != (snap_panel == "local"):
+        return (
+            "against-board" + scope + "\n\n"
+            f"No {run_panel}-lane baselines in the packaged snapshot yet (it is a "
+            f"{snap_panel}-panel sample). A {run_panel}-judged score is a different instrument "
+            f"than the {snap_panel} panel, so it is not overlaid here. Publish a local-lane "
+            "card to seed the local board, or re-run with --judges gold to compare on the "
+            "frontier lane."
+        )
+
     rows = snapshot.get("rows", [])
     if domain:
         rows = [r for r in rows if domain in r.get("by_domain", {})]
 
     local = _local_scores(result_json, domain)
     me = result_json["target"]["ref"]
-    scope = f" · domain={domain}" if domain else ""
 
     header = ["against-board" + scope + "  (SAMPLE snapshot — not validated)", ""]
     col = "  {:<22}" + "".join(f" {k[:8]:>8}" for k in _AGAINST_KEYS)
@@ -141,8 +162,8 @@ def render_against_board(result_json: dict, *, domain: str | None = None, snapsh
 def _ineligible_reason(result_json: dict) -> str | None:
     if result_json.get("mode") != "benchmark":
         return "custom/lab runs are not comparable"
-    if result_json.get("judge_panel") != "gold":
-        return "only a gold-panel run is comparable (single is directional)"
+    if result_json.get("judge_panel") not in ("gold", "local"):
+        return "only a gold or local panel run is comparable (single is a directional inner loop)"
     if result_json.get("incomplete"):
         return "the run is incomplete"
     if result_json.get("run_failures"):
@@ -184,12 +205,24 @@ def publish_card_bundle(result_json: dict, out_dir: str | Path, *, render=True) 
 def _post_text(result_json: dict, row: BoardRow) -> str:
     at = row.scores.get("AI_Trust")
     at_str = f"{at:.2f}" if isinstance(at, (int, float)) else "N/A"
+    panel = result_json.get("judge_panel", "gold")
+    panel_label = {
+        "gold": "gold panel",
+        "local": "local FT judge (gemma4-judge-ft-v3, offline)",
+    }.get(panel, f"{panel} panel")
+    local_note = (
+        "> LOCAL JUDGE — scored by the offline fine-tuned judge: a different instrument "
+        "than the frontier gold panel (comparable to other local-lane runs only).\n\n"
+        if panel == "local" else ""
+    )
     return (
         f"# aipsy-bench result — {row.name}\n\n"
-        f"AI-Trust **{at_str}** (gold panel, data {row.data_version}).\n\n"
-        "> PROVISIONAL — instrument not yet human-validated (§0.3). "
-        "Scores are descriptive only.\n\n"
+        f"AI-Trust **{at_str}** ({panel_label}, data {row.data_version}).\n\n"
+        f"{local_note}"
+        "> DIRECTIONAL — a recommendation, not a rubber-stamp. The 014 human-agreement "
+        "study runs in parallel; this score is directional and reproducible, not yet a "
+        "human-validated rating (§0.3). Re-run it yourself to reproduce.\n\n"
         "To publish on the public gallery, open a PR adding `board_row.json` + `card.svg` "
         "to the gallery repo. This bundle is local — nothing was sent anywhere.\n\n"
-        f"Reproduce: `aipsy-bench run --model {result_json['target']['ref']} --judges gold`\n"
+        f"Reproduce: `aipsy-bench run --model {result_json['target']['ref']} --judges {panel}`\n"
     )

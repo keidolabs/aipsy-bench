@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from . import spec
 from .gate import evaluate_gate
-from .validation import JudgeValidation, provisional_banner
+from .validation import JudgeValidation, directional_banner, local_judge_banner
 
 DATA_VERSION = spec.DATA_VERSION
 SCORER_NAME = "clinical_judge_panel"
@@ -106,7 +106,9 @@ def to_result_json(
         warnings.append("run INCOMPLETE — partial results; not gated, not carded (§16)")
     if panel == "single":
         warnings.append("single-judge panel — scores NOT comparable to published gold numbers")
-    banner = provisional_banner(validation)
+    elif panel == "local":
+        warnings.append(local_judge_banner())
+    banner = directional_banner(validation)
     if banner:
         warnings.append(banner)
 
@@ -196,9 +198,9 @@ def _fmt(v) -> str:
 
 
 def render_report(result_json: dict) -> str:
-    """Human-readable text report; prints the §0.3 provisional banner prominently."""
+    """Human-readable text report; prints the §0.3 directional banner prominently."""
     lines: list[str] = []
-    banner = next((w for w in result_json["warnings"] if w.startswith("⚠ PROVISIONAL")), None)
+    banner = next((w for w in result_json["warnings"] if w.startswith("⚠ DIRECTIONAL")), None)
     if banner:
         bar = "═" * 78
         lines += [bar, banner, bar, ""]
@@ -254,7 +256,7 @@ def render_report(result_json: dict) -> str:
             lines.append("")
 
     for w in result_json["warnings"]:
-        if not w.startswith("⚠ PROVISIONAL"):
+        if not w.startswith("⚠ DIRECTIONAL"):
             lines.append(f"warning: {w}")
     return "\n".join(lines)
 

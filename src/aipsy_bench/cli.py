@@ -24,6 +24,7 @@ from .validation import load_validation
 # Rough per-call cost / throughput for --dry-run (NOT billing-accurate; a planning aid).
 _EST_COST_PER_CALL = 0.0015
 _EST_CALLS_PER_MIN = 60.0
+_EST_LOCAL_CALLS_PER_MIN = 12.0  # local FT judge is slower per call than a frontier API
 
 # provider → (SDK import module, pyproject extra) for clean "install the extra" hints.
 # The provider SDKs are optional extras (offline/mock runs need none); a real run
@@ -42,9 +43,19 @@ def _sdk_installed(provider: str) -> bool:
         return False
 
 
+def _judge_panel_providers(judges: str) -> set[str]:
+    """Frontier providers a judge panel needs (empty for the local panel — its judge
+    runs on the local Ollama server, no provider SDK/key)."""
+    if judges == "gold":
+        return set(spec.PROVIDERS)
+    if judges == "single":
+        return {spec.PRIMARY_JUDGE_PROVIDER}
+    return set()  # local
+
+
 def _required_providers(ref: str, judges: str) -> list[str]:
     """Providers whose SDK a real run needs: the judge panel + the target provider."""
-    provs = set(spec.PROVIDERS if judges == "gold" else (spec.PRIMARY_JUDGE_PROVIDER,))
+    provs = _judge_panel_providers(judges)
     target_provider = ref.split("/", 1)[0]
     if target_provider in _PROVIDER_SDK:
         provs.add(target_provider)
@@ -60,6 +71,37 @@ def _missing_sdk_hint(missing: list[str]) -> str:
         f"  uv sync {per}\n"
         "  uv sync --all-extras        # all judge providers (openai, anthropic, google)"
     )
+
+
+def _local_judge_preflight() -> str | None:
+    """Block a real-target local-judge run until Ollama + the FT model are ready."""
+    from . import local_judge
+
+    if not local_judge.ollama_running():
+        return (
+            "error: the local judge needs a running Ollama server (none reachable at "
+            f"{spec.OLLAMA_BASE_URL}).\n"
+            "  start it:       ollama serve\n"
+            "  set up the judge: aipsy-bench judge pull\n"
+            "  or use a frontier panel: --judges single|gold"
+        )
+    if not local_judge.model_present():
+        return (
+            f"error: the local judge model '{spec.LOCAL_JUDGE_TAG}' is not installed in Ollama.\n"
+            "  set it up:               aipsy-bench judge pull\n"
+            "  or use a frontier panel: --judges single|gold"
+        )
+    # Warm the model so the first scored call doesn't hit a cold-load timeout (the ~27 GB
+    # Q8_0 model can take minutes to page into memory on the first request).
+    print(f"loading the local judge '{spec.LOCAL_JUDGE_TAG}' into memory "
+          "(first run can take a few minutes for the ~27 GB model) …", file=sys.stderr)
+    if not local_judge.warm_up():
+        return (
+            "error: the local judge model failed to load — Ollama may have run out of memory "
+            f"(Q8_0 is ~{spec.LOCAL_JUDGE_RAM_GB} GB resident). Close other apps and retry, or "
+            "use --judges single|gold."
+        )
+    return None
 
 
 def _parse_judge_overrides(items: list[str] | None) -> dict[str, str] | None:
@@ -83,13 +125,19 @@ def estimate(n_scenarios: int, judges: str) -> dict:
     target_calls = n_scenarios * spec.N_TURNS
     judge_calls = target_calls * (3 if judges == "gold" else 1)
     total = target_calls + judge_calls
+    local = judges == "local"
+    # The local judge runs on your machine: free, but slower per call. Only the target
+    # calls are billed (and only if the target is a paid API — mock/local targets cost $0).
+    billed_calls = target_calls if local else total
+    rate = _EST_LOCAL_CALLS_PER_MIN if local else _EST_CALLS_PER_MIN
     return {
         "scenarios": n_scenarios,
         "target_calls": target_calls,
         "judge_calls": judge_calls,
         "total_calls": total,
-        "est_cost_usd": total * _EST_COST_PER_CALL,
-        "est_minutes": total / _EST_CALLS_PER_MIN,
+        "local_judge": local,
+        "est_cost_usd": billed_calls * _EST_COST_PER_CALL,
+        "est_minutes": total / rate,
     }
 
 
@@ -100,7 +148,7 @@ def _run(args: argparse.Namespace) -> int:
         print("error: specify --target <ref> or --model <ref> (or set it in aipsy-bench.yaml)", file=sys.stderr)
         return 2
 
-    judges = args.judges or cfg.judges or "single"
+    judges = args.judges or cfg.judges or "local"
     quick = args.quick or cfg.quick
     scenario = args.scenario or cfg.scenario
     scenario_ids = [s.strip() for s in scenario.split(",")] if scenario else None
@@ -120,6 +168,8 @@ def _run(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"dry-run estimate ({judges} panel, {n_scen} scenarios × {spec.N_TURNS} turns):")
         print(f"  target calls: {est['target_calls']}   judge calls: {est['judge_calls']}   total: {est['total_calls']}")
+        if est["local_judge"]:
+            print(f"  judge: local Ollama ({spec.LOCAL_JUDGE_VERSION}) — free, runs on your machine")
         print(f"  est. cost: ~${est['est_cost_usd']:.2f}   est. wall-time: ~{est['est_minutes']:.1f} min")
         print("  (rough planning estimate — not billing-accurate; no scored calls made)")
         return 0
@@ -133,6 +183,11 @@ def _run(args: argparse.Namespace) -> int:
         if missing:
             print(_missing_sdk_hint(missing), file=sys.stderr)
             return 2
+        if judges == "local":  # the local judge needs a running Ollama + the FT model
+            err = _local_judge_preflight()
+            if err:
+                print(err, file=sys.stderr)
+                return 2
 
     resolved = resolve_target(ref)
     task = aipsy_bench(
@@ -346,7 +401,7 @@ def _doctor(args: argparse.Namespace) -> int:
     """Preflight: data SHA, judge keys for the panel, resolved config. No scored calls."""
     cfg = load_config(args.config)
     ref = args.model or args.target or cfg.target or "mock"
-    judges = args.judges or cfg.judges or "single"
+    judges = args.judges or cfg.judges or "local"
 
     print("aipsy-bench doctor (preflight — no scored calls)\n")
     try:
@@ -357,23 +412,56 @@ def _doctor(args: argparse.Namespace) -> int:
         print(f"  data/v1 integrity: FAIL — {e}")
         data_ok = False
 
-    if is_mock_ref(ref):
+    ready = True
+    if judges == "local":
+        # The headline default: report local-judge readiness regardless of target.
+        ready = _print_local_judge_doctor()
+        if is_mock_ref(ref):
+            print("    note: --target mock uses offline mock judges (no Ollama needed); the "
+                  "block above is your readiness for a REAL target.")
+        else:  # a real target still needs ITS provider key/SDK
+            ready = _print_provider_doctor([ref.split("/", 1)[0]], ref, judges) and ready
+    elif is_mock_ref(ref):
         print("  judges: mock target → offline mock judges, no keys or SDKs needed")
-        ready = True
     else:
-        print(f"  providers ({judges} panel + target) — key + SDK:")
-        ready = True
-        for p in _required_providers(ref, judges):
-            env = spec.API_ENV_VARS[p]
-            key_ok = bool(os.environ.get(env))
-            sdk_ok = _sdk_installed(p)
-            ready = ready and key_ok and sdk_ok
-            sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[p]})"
-            print(f"    {p} ({spec.JUDGE_MODEL_PINS[p]}): {env} "
-                  f"{'present' if key_ok else 'MISSING'}; SDK {sdk_str}")
+        ready = _print_provider_doctor(_required_providers(ref, judges), ref, judges)
 
     print(f"\n  resolved: target={ref}  judges={judges}  data_version={spec.DATA_VERSION}")
     return 0 if (data_ok and ready) else 1
+
+
+def _print_local_judge_doctor() -> bool:
+    from . import local_judge
+
+    st = local_judge.status()
+    print(f"  local judge ({st['version']}, served {st['quant']} via Ollama):")
+    print(f"    Ollama server : {'reachable' if st['running'] else 'NOT reachable (run: ollama serve)'}")
+    tag = st["tag"]
+    if st["running"]:
+        print(f"    model '{tag}' : {'installed' if st['model_present'] else 'MISSING (run: aipsy-bench judge pull)'}")
+    ram = st["ram_gb"]
+    if ram is not None:
+        warn = (f"  ⚠ tight — {spec.LOCAL_JUDGE_RAM_RECOMMENDED_GB} GB+ recommended; on a Mac raise "
+                "iogpu.wired_limit_mb (docs/local-judge.md)") if st["ram_tight"] else ""
+        print(f"    system RAM    : {ram:.0f} GB{warn}")
+    return bool(st["running"] and st["model_present"])
+
+
+def _print_provider_doctor(providers: list[str], ref: str, judges: str) -> bool:
+    label = "target" if providers == [ref.split("/", 1)[0]] and judges == "local" else f"{judges} panel + target"
+    print(f"  providers ({label}) — key + SDK:")
+    ready = True
+    for p in providers:
+        if p not in spec.API_ENV_VARS:  # e.g. an Ollama/local target provider — let Inspect handle it
+            continue
+        env = spec.API_ENV_VARS[p]
+        key_ok = bool(os.environ.get(env))
+        sdk_ok = _sdk_installed(p)
+        ready = ready and key_ok and sdk_ok
+        sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[p]})"
+        pin = spec.JUDGE_MODEL_PINS.get(p, "target")
+        print(f"    {p} ({pin}): {env} {'present' if key_ok else 'MISSING'}; SDK {sdk_str}")
+    return ready
 
 
 def _provenance(args: argparse.Namespace) -> int:
@@ -396,12 +484,21 @@ def _provenance(args: argparse.Namespace) -> int:
     print(f"  git_sha      : {_git_sha()}")
     print(f"  run_id       : {log.eval.run_id}")
     print(f"  target       : {log.eval.model}")
-    print(f"  judge_panel  : {meta.get('judge_panel')}")
-    print("  judge pins   :")
-    for p, pin in spec.JUDGE_MODEL_PINS.items():
-        resolved = snapshots.get(p)
-        line = f"    {p}: {pin}" + (f"  (resolved: {resolved})" if resolved else "")
-        print(line)
+    panel = meta.get("judge_panel")
+    print(f"  judge_panel  : {panel}")
+    if panel == "local":
+        resolved = snapshots.get("local")
+        print("  local judge  :")
+        print(f"    {spec.LOCAL_JUDGE_VERSION}  (Ollama tag {spec.LOCAL_JUDGE_TAG}, served {spec.LOCAL_JUDGE_QUANT})"
+              + (f"  (resolved: {resolved})" if resolved else ""))
+        print(f"    gguf sha256: {spec.LOCAL_JUDGE_GGUF_SHA256}")
+        print(f"    weights    : hf.co/{spec.LOCAL_JUDGE_HF_REPO}")
+    else:
+        print("  judge pins   :")
+        for p, pin in spec.JUDGE_MODEL_PINS.items():
+            resolved = snapshots.get(p)
+            line = f"    {p}: {pin}" + (f"  (resolved: {resolved})" if resolved else "")
+            print(line)
     return 0
 
 
@@ -432,6 +529,52 @@ def _cite(args: argparse.Namespace) -> int:
 
     print(cite.bibtex())
     return 0
+
+
+def _judge_status(args: argparse.Namespace) -> int:
+    """Check the local Ollama judge is ready (no scored calls)."""
+    from . import local_judge
+
+    st = local_judge.status()
+    print(f"local judge: {st['version']}  (Ollama tag {st['tag']}, served {st['quant']})")
+    print(f"  Ollama server : {'reachable' if st['running'] else 'NOT reachable — run: ollama serve'}")
+    if st["running"]:
+        present = "yes" if st["model_present"] else "no — run: aipsy-bench judge pull"
+        print(f"  model present : {present}")
+    if st["ram_gb"] is not None:
+        tight = (f"  ⚠ tight — {spec.LOCAL_JUDGE_RAM_RECOMMENDED_GB} GB+ recommended "
+                 "(see docs/local-judge.md)") if st["ram_tight"] else ""
+        print(f"  system RAM    : {st['ram_gb']:.0f} GB{tight}")
+    print(f"  weights       : hf.co/{spec.LOCAL_JUDGE_HF_REPO}")
+    ok = bool(st["running"] and st["model_present"])
+    if not ok:
+        print("\nnot ready — run: aipsy-bench judge pull")
+    return 0 if ok else 1
+
+
+def _judge_pull(args: argparse.Namespace) -> int:
+    """Download the FT GGUF from HF (via HF_TOKEN) + register the Ollama tag."""
+    from . import local_judge
+
+    res = local_judge.ensure_model(force=args.force)
+    return 0 if res["status"] in ("ready", "created") else 1
+
+
+def _judge_warm(args: argparse.Namespace) -> int:
+    """Pre-load the model into memory (absorbs the one-time cold-load before a run)."""
+    from . import local_judge
+
+    if not local_judge.ollama_running():
+        print("error: Ollama is not running — start it with: ollama serve", file=sys.stderr)
+        return 1
+    if not local_judge.model_present():
+        print("error: model not installed — run: aipsy-bench judge pull", file=sys.stderr)
+        return 1
+    print(f"loading '{spec.LOCAL_JUDGE_TAG}' into memory (first load can take a few minutes) …")
+    ok = local_judge.warm_up()
+    print("ready — model is resident and warm." if ok
+          else f"FAILED to load (out of memory? Q8_0 is ~{spec.LOCAL_JUDGE_RAM_GB} GB).")
+    return 0 if ok else 1
 
 
 def _prompt_provider() -> str | None:
@@ -509,8 +652,9 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="run the benchmark against a target")
     r.add_argument("--model", help="Tier-0 Inspect model string, e.g. openai/gpt-5.4-mini")
     r.add_argument("--target", help="target ref: 'mock', 'mock:failing', or an Inspect model string")
-    r.add_argument("--judges", choices=["single", "gold"], default=None,
-                   help="single = primary judge (fast inner loop); gold = 3-judge ensemble")
+    r.add_argument("--judges", choices=["local", "single", "gold"], default=None,
+                   help="local = offline FT judge via Ollama (default, no keys); "
+                        "single = primary frontier judge; gold = 3-judge frontier ensemble")
     r.add_argument("--quick", action="store_true", help="smoke subset: one scenario/domain + s06,s07")
     r.add_argument("--scenario", help="comma-separated scenario ids, e.g. s06,s07")
     r.add_argument("--baseline-prompt", action="store_true", help="inject the 014 baseline system prompt (§6 opt-in)")
@@ -540,10 +684,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "plain when piped). Options: full|rich|plain|log|none")
     r.set_defaults(func=_run)
 
-    d = sub.add_parser("doctor", help="preflight: data SHA, judge keys, resolved config (no scored calls, §16)")
+    d = sub.add_parser("doctor", help="preflight: data SHA, judge readiness, resolved config (no scored calls, §16)")
     d.add_argument("--model")
     d.add_argument("--target")
-    d.add_argument("--judges", choices=["single", "gold"], default=None)
+    d.add_argument("--judges", choices=["local", "single", "gold"], default=None)
     d.add_argument("--config", default=None)
     d.set_defaults(func=_doctor)
 
@@ -574,6 +718,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     ci = sub.add_parser("cite", help="print BibTeX for the OSF registration + tool/data version")
     ci.set_defaults(func=_cite)
+
+    j = sub.add_parser("judge", help="set up / check the local Ollama judge (the offline default)")
+    jsub = j.add_subparsers(dest="jcmd", required=True)
+    jstatus = jsub.add_parser("status", help="check Ollama + the FT model are ready (no scored calls)")
+    jstatus.set_defaults(func=_judge_status)
+    jpull = jsub.add_parser("pull", help="download the FT GGUF from HF (uses HF_TOKEN) + register the Ollama tag")
+    jpull.add_argument("--force", action="store_true", help="re-create the tag even if already present")
+    jpull.set_defaults(func=_judge_pull)
+    jwarm = jsub.add_parser("warm", help="pre-load the model into memory (absorbs the one-time cold load)")
+    jwarm.set_defaults(func=_judge_warm)
 
     k = sub.add_parser("keys", help="save provider API keys to your local .env (your keys, your cost)")
     ksub = k.add_subparsers(dest="kcmd", required=True)

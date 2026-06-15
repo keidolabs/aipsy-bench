@@ -50,11 +50,25 @@ def test_domain_filter(tmp_path):
 
 
 def test_cli_against_board_offline(tmp_path, capsys):
+    # a frontier-lane run overlays on the (gold) snapshot
     rc = main([
-        "run", "--target", "mock", "--quick", "--against-board",
+        "run", "--target", "mock", "--judges", "gold", "--quick", "--against-board",
         "--out", str(tmp_path / "run"), "--display", "none", "--no-card",
     ])
     out = capsys.readouterr().out
     assert "against-board" in out
     assert "YOU: mock" in out
+    assert rc == 0
+
+
+def test_cli_against_board_local_quarantined(tmp_path, capsys):
+    # the default (local) lane is a different instrument than the gold snapshot — it is
+    # NOT overlaid on the frontier baselines (a cross-instrument number is meaningless).
+    rc = main([
+        "run", "--target", "mock", "--quick", "--against-board",
+        "--out", str(tmp_path / "run"), "--display", "none", "--no-card",
+    ])
+    out = capsys.readouterr().out
+    assert "No local-lane baselines" in out
+    assert "YOU: mock" not in out
     assert rc == 0

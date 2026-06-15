@@ -17,7 +17,11 @@ from .scorer import aipsy_na_mean, clinical_judge_panel
 from .solver import scripted_dialogue
 from .targets import is_mock_ref
 
-_PANEL_PROVIDERS = {"single": (spec.PRIMARY_JUDGE_PROVIDER,), "gold": spec.PROVIDERS}
+_PANEL_PROVIDERS = {
+    "local": (spec.LOCAL_JUDGE_PROVIDER,),  # the offline, self-contained default
+    "single": (spec.PRIMARY_JUDGE_PROVIDER,),
+    "gold": spec.PROVIDERS,
+}
 
 
 def quick_scenario_ids() -> list[str]:

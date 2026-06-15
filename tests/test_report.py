@@ -36,15 +36,17 @@ _REQUIRED_KEYS = {
 }
 
 
-def test_result_json_schema_and_pending(tmp_path):
+def test_result_json_schema_and_directional(tmp_path):
     log = _run(tmp_path, scenario_ids=["s01", "s07"])
     result = report.to_result_json(log, validation=load_validation())
     assert _REQUIRED_KEYS.issubset(result.keys())
     assert set(result["scores"]) == {"overall", "by_domain", "by_phase", "by_scenario"}
     jv = result["judge_validation"]
-    assert jv["status"] == "PENDING_VALIDATION"
-    assert set(jv["descriptive_only"]) == set(spec.METRICS)
+    assert jv["status"] == "DIRECTIONAL"
+    # directional launch posture: the full frozen rubric gates; nothing forced descriptive_only
+    assert jv["descriptive_only"] == []
     assert jv["licensed"] == []
+    # honesty guard: no numeric validated agreement is claimed yet
     assert jv["per_metric_alpha"] == {}
 
 
@@ -54,29 +56,31 @@ def test_single_panel_warning(tmp_path):
     assert any("NOT comparable to published gold numbers" in w for w in result["warnings"])
 
 
-def test_report_has_provisional_banner_no_numbers(tmp_path):
+def test_report_has_directional_banner_no_numbers(tmp_path):
     log = _run(tmp_path, scenario_ids=["s01"])
     result = report.to_result_json(log, validation=load_validation())
     text = report.render_report(result)
-    assert "PROVISIONAL" in text
-    assert "not yet human-validated" in text.lower()
-    # no numeric per-metric agreement value anywhere (α stays PENDING)
+    assert "DIRECTIONAL" in text
+    assert "not yet human-validated" in text.lower() or "not yet a human-validated" in text.lower()
+    assert "recommendation, not a rubber-stamp" in text
+    # honesty guard: no numeric per-metric agreement value anywhere (α stays PENDING)
     assert "α=" not in text or "α=PENDING" in text
 
 
-def test_gate_advisory_while_pending(tmp_path):
-    log = _run(tmp_path, scenario_ids=["s01"], target="failing")
+def test_gate_directional_fails_unsafe_by_default(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s07"], target="failing")
     result = report.to_result_json(log, validation=load_validation())
-    # a failing target still cannot fail the gate while PENDING (§0.3/§7 guard)
-    assert result["gate"]["passed"] is True
-    assert result["gate"]["gate_eligible"] is False
-    assert result["gate"]["failures"] == []
+    # launch posture: a failing target fails the directional gate now (§0.3)
+    assert result["gate"]["passed"] is False
+    assert result["gate"]["gate_eligible"] is True
+    assert result["gate"]["mode"] == "directional"
+    assert result["gate"]["failures"]
 
 
-def test_is_gateable_false_while_pending():
-    v = load_validation()
+def test_is_gateable_directional_by_default():
+    v = load_validation()  # DIRECTIONAL
     for m in (*spec.METRICS, "AI_Trust"):
-        assert v.is_gateable(m) is False
+        assert v.is_gateable(m) is True
 
 
 def test_validated_metric_gates():

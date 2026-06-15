@@ -5,8 +5,8 @@ SVG is the primary artifact (full text card). The PNG is a deterministic,
 dependency-free raster of the six metric dials (a tiny stdlib PNG encoder — no
 native libs, so CI stays offline). A future Next.js site consumes these + board.json.
 
-While 014 validation is PENDING the card shows the provisional banner — never a
-validated stamp or an agreement number (§0.3).
+Until the 014 study lands the card shows the directional banner — a recommendation,
+never a validated stamp or an agreement number (§0.3).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import zlib
 from xml.sax.saxutils import escape
 
 from . import spec
-from .validation import PENDING
+from .validation import VALIDATED
 
 _W, _H = 1200, 630  # OpenGraph card size
 _BG = "#0f1117"
@@ -43,7 +43,19 @@ def _esc(s: str) -> str:
 
 
 def reproduce_command(result_json: dict) -> str:
-    return f"aipsy-bench run --model {result_json['target']['ref']}"
+    panel = result_json.get("judge_panel", "gold")
+    suffix = f" --judges {panel}" if panel in ("gold", "local", "single") else ""
+    return f"aipsy-bench run --model {result_json['target']['ref']}{suffix}"
+
+
+def _judge_stamp(result_json: dict, directional: bool) -> str:
+    """The bottom-bar provenance stamp — panel-aware so a local card never reads as
+    the frontier-gold or validated instrument."""
+    if result_json.get("judge_panel") == "local":
+        return "◆ LOCAL JUDGE · gemma4-judge-ft-v3 (offline) — directional, flag-for-review"
+    if directional:
+        return "⚠ DIRECTIONAL — recommendation, not yet human-validated (014 study in parallel)"
+    return "validated against clinical experts · OSF DOI"
 
 
 def brutal_line(result_json: dict) -> str:
@@ -65,7 +77,7 @@ def og_meta_tags(result_json: dict) -> str:
     """OpenGraph / Twitter-card meta tags so links unfurl into rich previews (§4.5)."""
     at = _fmt(result_json["scores"]["overall"].get("AI_Trust"))
     title = f"aipsy-bench · {result_json['target']['ref']} · AI-Trust {at}"
-    desc = "Psychological-safety benchmark for conversational AI — provisional (instrument not yet human-validated)."
+    desc = "Psychological-safety benchmark for conversational AI — directional (recommendation; not yet human-validated)."
     return "\n".join([
         f'<meta property="og:title" content="{_esc(title)}" />',
         f'<meta property="og:description" content="{_esc(desc)}" />',
@@ -79,7 +91,7 @@ def render_card(result_json: dict) -> tuple[str, bytes]:
     overall = result_json["scores"]["overall"]
     ai_trust = overall.get("AI_Trust")
     ref = result_json["target"]["ref"]
-    pending = result_json["judge_validation"]["status"] == PENDING
+    directional = result_json["judge_validation"]["status"] != VALIDATED
 
     rows = []
     y = 250
@@ -94,11 +106,7 @@ def render_card(result_json: dict) -> tuple[str, bytes]:
         )
         y += 46
 
-    stamp = (
-        "⚠ PROVISIONAL — instrument NOT yet human-validated (014 validation pending)"
-        if pending else
-        "validated against clinical experts · OSF DOI"
-    )
+    stamp = _judge_stamp(result_json, directional)
 
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{_W}" height="{_H}" viewBox="0 0 {_W} {_H}" font-family="system-ui, sans-serif">
   <metadata>
@@ -130,8 +138,9 @@ def render_badge(result_json: dict) -> str:
     """
     at = _fmt(result_json["scores"]["overall"].get("AI_Trust"))
     color = _band_color(result_json["scores"]["overall"].get("AI_Trust"))
-    label, value = "psych-safety", f"AI-Trust {at}"
-    lw, vw = 90, 110
+    local = result_json.get("judge_panel") == "local"
+    label, value = ("psych-safety·local" if local else "psych-safety"), f"AI-Trust {at}"
+    lw, vw = (120 if local else 90), 110
     run_id = result_json.get("run_id", "")
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{lw + vw}" height="20" role="img" aria-label="{label}: {value}">
   <title>aipsy-bench badge (run {_esc(run_id)})</title>

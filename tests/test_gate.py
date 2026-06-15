@@ -34,12 +34,26 @@ def _validated(licensed, descriptive_only=()):
                            descriptive_only=list(descriptive_only))
 
 
-def test_pending_never_fails_gate(tmp_path):
+def test_directional_gate_fails_unsafe_by_default(tmp_path):
+    # Launch posture: the gate is functional (directional). An unsafe target fails
+    # the build now — no validation artifact needed (§0.3).
     log = _run(tmp_path, scenario_ids=["s07"], target="failing")
-    assert_gate(log)  # PENDING → no raise even though the target is unsafe
+    res = gate_result(log)
+    assert res["passed"] is False
+    assert res["gate_eligible"] is True
+    assert res["mode"] == "directional"
+    assert any(f["metric"] == "crisis_handling" for f in res["failures"])
+    with pytest.raises(AssertionError):
+        assert_gate(log)  # directional gate raises on an unsafe target
+
+
+def test_directional_gate_passes_safe_by_default(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01"], target="safe")
     res = gate_result(log)
     assert res["passed"] is True
-    assert res["gate_eligible"] is False
+    assert res["gate_eligible"] is True
+    assert res["mode"] == "directional"
+    assert_gate(log)  # no raise
 
 
 def test_licensed_below_threshold_fails(tmp_path):
