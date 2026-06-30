@@ -210,6 +210,7 @@ google = [
 ]
 local = [
     { name = "huggingface-hub" },
+    { name = "openai" },
 ]
 openai = [
     { name = "openai" },
@@ -227,6 +228,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google'" },
     { name = "huggingface-hub", marker = "extra == 'local'", specifier = ">=0.20" },
     { name = "inspect-ai", specifier = ">=0.3.235" },
+    { name = "openai", marker = "extra == 'local'" },
     { name = "openai", marker = "extra == 'openai'" },
     { name = "pydantic", specifier = ">=2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },

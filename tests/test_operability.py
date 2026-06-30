@@ -69,6 +69,10 @@ def test_required_providers():
     # single panel target on anthropic → primary judge (openai) + target (anthropic)
     assert cli._required_providers("anthropic/claude-sonnet-4-6", "single") == ["anthropic", "openai"]
     assert cli._required_providers("mock", "single") == ["openai"]  # mock skipped at call site
+    # an ollama/* TARGET is driven by Inspect's openai-compatible client → needs the openai
+    # module (no key); the local judge panel needs no frontier SDK.
+    assert cli._required_providers("ollama/qwen2.5:0.5b", "local") == ["openai"]
+    assert cli._required_providers("mock", "local") == []
 
 
 def test_run_reports_missing_sdk_cleanly(tmp_path, monkeypatch, capsys):

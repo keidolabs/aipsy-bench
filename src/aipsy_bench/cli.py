@@ -54,10 +54,14 @@ def _judge_panel_providers(judges: str) -> set[str]:
 
 
 def _required_providers(ref: str, judges: str) -> list[str]:
-    """Providers whose SDK a real run needs: the judge panel + the target provider."""
+    """SDK modules a real run needs: the judge panel + the target provider. An
+    ``ollama/<model>`` TARGET is driven via Inspect's OpenAI-compatible client, so it needs
+    the ``openai`` module (no API key) — map it so the preflight catches a missing client."""
     provs = _judge_panel_providers(judges)
     target_provider = ref.split("/", 1)[0]
-    if target_provider in _PROVIDER_SDK:
+    if target_provider == "ollama":
+        provs.add("openai")
+    elif target_provider in _PROVIDER_SDK:
         provs.add(target_provider)
     return sorted(provs)
 
@@ -452,7 +456,13 @@ def _print_provider_doctor(providers: list[str], ref: str, judges: str) -> bool:
     print(f"  providers ({label}) — key + SDK:")
     ready = True
     for p in providers:
-        if p not in spec.API_ENV_VARS:  # e.g. an Ollama/local target provider — let Inspect handle it
+        if p == "ollama":  # ollama target: Inspect's openai client lib, no API key
+            sdk_ok = _sdk_installed("openai")
+            ready = ready and sdk_ok
+            print(f"    ollama target: openai client lib "
+                  f"{'installed' if sdk_ok else 'MISSING (uv sync --extra local)'}; no key needed")
+            continue
+        if p not in spec.API_ENV_VARS:  # other non-keyed provider — let Inspect handle it
             continue
         env = spec.API_ENV_VARS[p]
         key_ok = bool(os.environ.get(env))

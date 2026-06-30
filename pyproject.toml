@@ -18,9 +18,10 @@ aipsy-bench = "aipsy_bench.cli:main"
 openai = ["openai"]
 anthropic = ["anthropic"]
 google = ["google-genai"]
-# `local` is only needed to PULL the local judge (`aipsy-bench judge pull`); scoring with the
-# local judge uses stdlib (native Ollama /api/chat) and needs no extra.
-local = ["huggingface-hub>=0.20"]
+# `local` covers a fully-local run: `huggingface-hub` for `judge pull`, plus the `openai`
+# client which Inspect uses to drive a local `ollama/<model>` TARGET. (The local JUDGE itself
+# is stdlib — native Ollama /api/chat — and needs no extra; the openai client is for the target.)
+local = ["huggingface-hub>=0.20", "openai"]
 
 [build-system]
 requires = ["hatchling"]
