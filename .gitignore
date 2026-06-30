@@ -18,6 +18,14 @@ runs/
 *.eval
 .aipsy/
 
+# aipsy-bench run outputs (result.json, report, cards, eval logs) — local artifacts,
+# NEVER committed (they accumulate real-target transcripts + scores). These are the
+# default --out dirs for `run` / `compare` + the e2e runbook dir; a custom --out dir
+# is your responsibility to keep out of git.
+aipsy-run/
+aipsy-compare/
+aipsy-e2e/
+
 # Secrets — provider API keys live in a local .env (NEVER committed). The template
 # .env.example is tracked; the real .env is not.
 .env
