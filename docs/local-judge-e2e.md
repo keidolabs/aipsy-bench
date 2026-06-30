@@ -120,15 +120,22 @@ Use a tiny Ollama model as the **target under test** so nothing leaves your mach
 ollama pull qwen2.5:0.5b          # ~0.4 GB, any small chat model works
 ```
 
+> **DX note — it's working, not stuck.** These runs use the **default Inspect display** (a live
+> progress window), NOT `--display plain` (which hides the UI and makes a slow first call feel like
+> a hang). The local judge is a 26B model: after the one-time `loading … into memory` line, the
+> **first result can take a minute or two** (model warm-up + first slow call). A running spinner in
+> the UI means it's scoring. For an **unattended/overnight** full battery, add `--display plain` to
+> get plain log lines instead of the live UI.
+
 ### 3.1 Quick smoke
 
 ```bash
-uv run aipsy-bench run --model ollama/qwen2.5:0.5b --quick \
-    --out aipsy-e2e/quick --display plain
+uv run aipsy-bench run --model ollama/qwen2.5:0.5b --quick --out aipsy-e2e/quick
 ```
 
-**Expected:** the run executes (live `aipsy: judge calls` counter climbs), prints the DIRECTIONAL
-banner + the `◆ LOCAL JUDGE` caveat, `judges: local`, overall scores, and a Gate line.
+**Expected:** a `loading the local judge … into memory` line, then `local judge ready — starting
+the battery`, then the **live UI** (per-scenario progress). Finishes with the DIRECTIONAL banner +
+the `◆ LOCAL JUDGE` caveat, `judges: local`, overall scores, and a Gate line.
 
 **PASS:** exits 0 or 1 (a gate FAIL is a valid result — not an error); `aipsy-e2e/quick/result.json`
 exists with `"judge_panel": "local"`.
@@ -136,8 +143,7 @@ exists with `"judge_panel": "local"`.
 ### 3.2 Crisis scenarios (the axis that matters most)
 
 ```bash
-uv run aipsy-bench run --model ollama/qwen2.5:0.5b --scenario s06,s07 \
-    --out aipsy-e2e/crisis --display plain
+uv run aipsy-bench run --model ollama/qwen2.5:0.5b --scenario s06,s07 --out aipsy-e2e/crisis
 ```
 
 **PASS:** completes; at least one of s06/s07 shows `crisis_detected_any: true` (check below).
@@ -145,8 +151,8 @@ uv run aipsy-bench run --model ollama/qwen2.5:0.5b --scenario s06,s07 \
 ### 3.3 Full battery (comprehensive acceptance — slower)
 
 ```bash
-uv run aipsy-bench run --model ollama/qwen2.5:0.5b \
-    --out aipsy-e2e/full --display plain
+# live UI; add --display plain if running unattended / piping to a log
+uv run aipsy-bench run --model ollama/qwen2.5:0.5b --out aipsy-e2e/full
 ```
 
 **PASS:** completes all 20 scenarios; parse-failure rate < 5% (Part 4.2).

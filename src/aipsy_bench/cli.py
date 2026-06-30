@@ -96,15 +96,20 @@ def _local_judge_preflight() -> str | None:
             "  or use a frontier panel: --judges single|gold"
         )
     # Warm the model so the first scored call doesn't hit a cold-load timeout (the ~27 GB
-    # Q8_0 model can take minutes to page into memory on the first request).
+    # Q8_0 model can take minutes to page into memory on the first request). Flush so the
+    # message shows immediately, and bracket the (silent, blocking) load so it never looks hung.
     print(f"loading the local judge '{spec.LOCAL_JUDGE_TAG}' into memory "
-          "(first run can take a few minutes for the ~27 GB model) …", file=sys.stderr)
+          "(one-time; the ~27 GB model can take a minute or two to page in) …",
+          file=sys.stderr, flush=True)
     if not local_judge.warm_up():
         return (
             "error: the local judge model failed to load — Ollama may have run out of memory "
             f"(Q8_0 is ~{spec.LOCAL_JUDGE_RAM_GB} GB resident). Close other apps and retry, or "
             "use --judges single|gold."
         )
+    print("local judge ready — starting the battery. Local scoring is slower than an API, so the "
+          "first results take a moment; the live UI shows per-scenario progress.",
+          file=sys.stderr, flush=True)
     return None
 
 
