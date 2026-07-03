@@ -50,6 +50,7 @@ def aipsy_bench(
     max_retries: int | None = None,
     max_connections: int | None = None,
     judge_overrides: dict[str, str] | None = None,
+    local_num_ctx: int | None = None,
 ) -> Task:
     """Assemble the benchmark task. ``target`` only decides whether to wire mock
     judges (offline self-test); the model under test is passed to ``eval()``.
@@ -75,7 +76,7 @@ def aipsy_bench(
         solver=scripted_dialogue(baseline_prompt=baseline_prompt, conversation=conversation),
         scorer=clinical_judge_panel(panel=judges, judges=judge_models, cache=not mock,
                                     timeout=to, max_retries=mr, max_connections=max_connections,
-                                    judge_overrides=judge_overrides),
+                                    judge_overrides=judge_overrides, local_num_ctx=local_num_ctx),
         # Bound a hung/rate-limited TARGET call so it fails (→ run failure) instead of
         # hanging forever; keeps cancellation responsive. max_connections caps concurrency
         # to ease rate limiting.

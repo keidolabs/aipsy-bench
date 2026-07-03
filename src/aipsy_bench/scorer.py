@@ -66,11 +66,11 @@ def _pin_for(provider: str) -> str:
     return spec.JUDGE_MODEL_PINS[provider]
 
 
-def _judge_model_for(provider: str) -> Model:
+def _judge_model_for(provider: str, num_ctx: int | None = None) -> Model:
     """Resolve a pinned judge to an Inspect model (real-run path)."""
     if provider == spec.LOCAL_JUDGE_PROVIDER:
         from .local_judge import local_judge_model  # local import — keeps it off the offline path
-        return local_judge_model()
+        return local_judge_model(num_ctx=num_ctx)
     pin = spec.JUDGE_MODEL_PINS[provider]
     return get_model(f"{provider}/{pin}")
 
@@ -100,7 +100,7 @@ def _judge_config(provider: str, timeout: int, max_retries: int,
 
 
 def _resolve_judges(
-    panel: str, judges: dict[str, Model] | None
+    panel: str, judges: dict[str, Model] | None, num_ctx: int | None = None
 ) -> tuple[tuple[str, ...], dict[str, Model]]:
     if panel == "single":
         providers = (spec.PRIMARY_JUDGE_PROVIDER,)
@@ -111,7 +111,7 @@ def _resolve_judges(
     else:
         raise ValueError(f"unknown panel {panel!r} (expected 'local', 'gold', or 'single')")
     if judges is None:
-        models = {p: _judge_model_for(p) for p in providers}
+        models = {p: _judge_model_for(p, num_ctx=num_ctx) for p in providers}
     else:
         missing = [p for p in providers if p not in judges]
         if missing:
@@ -198,6 +198,7 @@ def clinical_judge_panel(
     max_retries: int | None = None,
     max_connections: int | None = None,
     judge_overrides: dict[str, str] | None = None,
+    local_num_ctx: int | None = None,
 ) -> Scorer:
     """The frozen judge instrument.
 
@@ -215,7 +216,7 @@ def clinical_judge_panel(
     weights = scoring.rubric_weights()
     thresholds = scoring.rubric_thresholds()
     system_prompt = bundle.load_judge_prompt() + INJECTION_FENCE
-    providers, models = _resolve_judges(panel, judges)
+    providers, models = _resolve_judges(panel, judges, num_ctx=local_num_ctx)
 
     overrides = judge_overrides or {}
     overrides_meta: dict[str, dict] = {}

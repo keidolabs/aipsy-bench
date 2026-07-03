@@ -86,11 +86,24 @@ def test_request_shape_matches_016_contract(tmp_path):
     assert "TARGET MESSAGE TO EVALUATE" in user_msg     # the formatted conversation input
 
     opts = p["options"]
-    assert opts["num_ctx"] == spec.LOCAL_JUDGE_NUM_CTX == 8192
+    assert opts["num_ctx"] == spec.LOCAL_JUDGE_NUM_CTX  # default (>= a full verbose 10-turn convo)
     assert opts["seed"] == spec.LOCAL_JUDGE_SEED
     assert opts["top_p"] == 1.0
     assert opts["temperature"] == spec.JUDGE_TEMPERATURE
     assert opts["num_predict"] == spec.JUDGE_MAX_TOKENS
+
+
+def test_num_ctx_override(tmp_path):
+    # --num-ctx flows to the Ollama request (raise for verbose targets / lower for memory)
+    captured: list = []
+    judge = local_judge_model(transport=_capturing_transport(captured), num_ctx=32768)
+    task = Task(
+        dataset=build_dataset(scenario_ids=["s01"]),
+        solver=scripted_dialogue(),
+        scorer=clinical_judge_panel(panel="local", judges={"local": judge}, cache=False),
+    )
+    inspect_eval(task, model=mock_target_model("safe"), display="none", log_dir=str(tmp_path / "logs"))
+    assert captured[-1]["payload"]["options"]["num_ctx"] == 32768
 
 
 def test_sync_post_raises_clean_unavailable():

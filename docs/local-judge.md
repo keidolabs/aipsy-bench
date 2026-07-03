@@ -68,7 +68,7 @@ cold-load timeout.
 
 `aipsy-bench judge pull` (with `uv sync --extra local`) downloads the GGUF + Modelfile from the
 HF repo `keidolabs/gemma4-judge-ft-v3` (private — needs `HF_TOKEN` in your env/.env), appends
-`PARAMETER num_ctx 8192` (the judge prompt is ~5k tokens; a smaller context truncates the
+`PARAMETER num_ctx 16384` (the judge prompt is ~5k tokens; a smaller context truncates the
 rubric), and runs `ollama create gemma4-judge-ft -f Modelfile`. Idempotent — re-run with
 `--force` to rebuild the tag.
 
@@ -81,7 +81,7 @@ hf download keidolabs/gemma4-judge-ft-v3 \
     gguf/gemma4-judge-ft-v3-q8.gguf gguf/Modelfile --local-dir ./gemma4-judge-ft
 # 3. Register the tag (the published GGUF is already Q8_0 — no --quantize):
 cd ./gemma4-judge-ft/gguf
-printf '\nPARAMETER num_ctx 8192\n' >> Modelfile   # if not already present
+printf '\nPARAMETER num_ctx 16384\n' >> Modelfile   # if not already present
 ollama create gemma4-judge-ft -f Modelfile
 # 4. Verify:
 aipsy-bench judge status
@@ -97,7 +97,7 @@ PARSER gemma4
 PARAMETER temperature 1
 PARAMETER top_k 64
 PARAMETER top_p 0.95
-PARAMETER num_ctx 8192
+PARAMETER num_ctx 16384
 ```
 
 ## How it scores (the frozen inference contract)
@@ -108,7 +108,14 @@ path byte-for-byte:
 - messages = `[{role: system, …rubric + injection fence}, {role: user, …conversation}]` — the
   gemma4 renderer handles the system message (it is **not** merged into the user turn at
   inference); the §13.7 prompt-injection fence is kept, same as the frontier judges.
-- options = `temperature 0.3, top_p 1.0, num_predict 4096, num_ctx 8192, seed 14`, `think: false`.
+- options = `temperature 0.3, top_p 1.0, num_predict 4096, num_ctx 16384, seed 14`, `think: false`.
+
+`num_ctx` defaults to **16384** so the rubric (~5k) + a full, *unconstrained* 10-turn conversation
++ the judge output all fit. (016 validated at 8192 on a concise, baseline-constrained pool; a real
+verbose target overflows 8k at deep turns → truncated output → `JudgeParseError`.) Raise it with
+`--num-ctx` for extremely verbose targets, or lower it on a memory-tight box (accepting deep-turn
+truncation). Raising `num_ctx` only ever *adds* context, so a transcript that already fit scores
+identically — bigger `num_ctx` just means a bigger KV cache.
 
 The temperature / max_tokens come from the same frozen `JUDGE_*` constants the frontier judges
 use. Provenance: `aipsy-bench provenance` prints the FT version, served quant, and the published
@@ -119,7 +126,8 @@ GGUF's sha256 (`9c38ef16…f4cf7d`).
 - **"Ollama not reachable"** → `ollama serve` (the server must be running on
   `http://localhost:11434`).
 - **"model not installed"** → `aipsy-bench judge pull` (or the manual steps above).
-- **Truncated / unparseable judge output** → confirm you're serving **Q8_0** (not Q4) and that
-  `num_ctx` is ≥ 8192 (`ollama show gemma4-judge-ft --modelfile`).
+- **Truncated / unparseable judge output (`JudgeParseError`), especially at deep turns** → a
+  verbose target overflowed the context. The default `num_ctx` is 16384; raise it: `--num-ctx
+  24576`. Also confirm you're serving **Q8_0** (not Q4).
 - **Out of memory on 32 GB** → close other apps; Q8_0 is ~27 GB resident. (A lighter Q4_K_M
   build is possible but truncates ~16% of outputs — not recommended.)

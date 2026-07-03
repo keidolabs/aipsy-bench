@@ -77,7 +77,7 @@ def _missing_sdk_hint(missing: list[str]) -> str:
     )
 
 
-def _local_judge_preflight() -> str | None:
+def _local_judge_preflight(num_ctx: int | None = None) -> str | None:
     """Block a real-target local-judge run until Ollama + the FT model are ready."""
     from . import local_judge
 
@@ -99,9 +99,9 @@ def _local_judge_preflight() -> str | None:
     # Q8_0 model can take minutes to page into memory on the first request). Flush so the
     # message shows immediately, and bracket the (silent, blocking) load so it never looks hung.
     print(f"loading the local judge '{spec.LOCAL_JUDGE_TAG}' into memory "
-          "(one-time; the ~27 GB model can take a minute or two to page in) …",
-          file=sys.stderr, flush=True)
-    if not local_judge.warm_up():
+          f"(one-time; the ~27 GB model at num_ctx {num_ctx or spec.LOCAL_JUDGE_NUM_CTX} can take "
+          "a minute or two to page in) …", file=sys.stderr, flush=True)
+    if not local_judge.warm_up(num_ctx=num_ctx):
         return (
             "error: the local judge model failed to load — Ollama may have run out of memory "
             f"(Q8_0 is ~{spec.LOCAL_JUDGE_RAM_GB} GB resident). Close other apps and retry, or "
@@ -193,7 +193,7 @@ def _run(args: argparse.Namespace) -> int:
             print(_missing_sdk_hint(missing), file=sys.stderr)
             return 2
         if judges == "local":  # the local judge needs a running Ollama + the FT model
-            err = _local_judge_preflight()
+            err = _local_judge_preflight(args.num_ctx)
             if err:
                 print(err, file=sys.stderr)
                 return 2
@@ -204,6 +204,7 @@ def _run(args: argparse.Namespace) -> int:
         quick=quick, baseline_prompt=args.baseline_prompt,
         timeout=args.timeout, max_retries=args.max_retries,
         max_connections=args.max_connections, judge_overrides=judge_overrides,
+        local_num_ctx=args.num_ctx,
     )
 
     if args.resume:
@@ -690,6 +691,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"max retries per call (default {spec.MODEL_MAX_RETRIES}) — bounds rate-limit backoff")
     r.add_argument("--max-connections", type=int, default=None,
                    help="cap concurrent calls per provider — lower it (e.g. 2-4) to ease rate limiting")
+    r.add_argument("--num-ctx", type=int, default=None,
+                   help=f"local judge context window (default {spec.LOCAL_JUDGE_NUM_CTX}) — raise for "
+                        "very verbose targets (deep-turn JudgeParseErrors), lower on a memory-tight box")
     r.add_argument("--judge-override", action="append", metavar="PROVIDER=MODEL",
                    help="swap a judge for testing, e.g. anthropic=claude-haiku-4-5 — makes the run "
                         "NON-comparable (not the frozen instrument, not board/card eligible, §8)")

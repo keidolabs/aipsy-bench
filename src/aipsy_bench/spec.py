@@ -142,7 +142,14 @@ LOCAL_JUDGE_RAM_RECOMMENDED_GB = 48
 # seed 14 for reproducibility, thinking disabled. temperature/max_tokens come from the
 # frozen JUDGE_* constants below (a call-time override of the Modelfile's defaults).
 OLLAMA_BASE_URL = "http://localhost:11434"
-LOCAL_JUDGE_NUM_CTX = 8192
+# Context window. 016 validated at 8192 on a baseline-constrained (concise) pool, but a REAL,
+# unconstrained target is verbose — so rubric (~5k) + a full 10-turn history + the judge output
+# routinely crosses 8k at deep turns, truncating the output → JudgeParseError. 16384 fits the
+# MAIN case (rubric + a verbose 10-turn conversation + output ≈ 11k) with headroom. Raising it
+# only ever ADDS context (a transcript that already fit 8k scores identically), so it is strictly
+# safer, not a scoring change. Overridable per run via --num-ctx (raise for extreme targets;
+# lower on a memory-tight box, accepting deep-turn truncation). Bigger num_ctx = bigger KV cache.
+LOCAL_JUDGE_NUM_CTX = 16384
 LOCAL_JUDGE_SEED = 14
 # The frontier per-call timeout (120s) is far too short for a local 26B model: the cold
 # load alone (paging ~27 GB into memory) can exceed it, and warm generation is slower than

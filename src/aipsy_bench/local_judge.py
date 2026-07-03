@@ -81,22 +81,25 @@ def _sync_post(url: str, payload: dict, timeout: float | None) -> dict:
         ) from e
 
 
-def _ollama_options(config: GenerateConfig) -> dict:
+def _ollama_options(config: GenerateConfig, num_ctx: int) -> dict:
     """Ollama call options — the frozen 016 inference contract (a call-time override
     of the Modelfile defaults). temperature/max_tokens flow from the frozen JUDGE_*
-    constants via the GenerateConfig the scorer builds."""
+    constants via the GenerateConfig the scorer builds; num_ctx is resolved by the
+    caller (the default, or a --num-ctx override)."""
     temperature = config.temperature if config.temperature is not None else spec.JUDGE_TEMPERATURE
     num_predict = config.max_tokens if config.max_tokens is not None else spec.JUDGE_MAX_TOKENS
     return {
         "temperature": temperature,
         "top_p": 1.0,                          # 016 inference (overrides the Modelfile's 0.95)
         "num_predict": num_predict,
-        "num_ctx": spec.LOCAL_JUDGE_NUM_CTX,   # the rubric is ~5k tokens — never truncate it
+        "num_ctx": num_ctx,                    # rubric (~5k) + full history + output must fit
         "seed": spec.LOCAL_JUDGE_SEED,         # reproducibility
     }
 
 
-def local_judge_model(*, tag: str | None = None, transport: Transport | None = None) -> Model:
+def local_judge_model(
+    *, tag: str | None = None, transport: Transport | None = None, num_ctx: int | None = None
+) -> Model:
     """The local FT judge as an Inspect model (native Ollama ``/api/chat``).
 
     The scorer passes ``[system, user]`` messages + a GenerateConfig; we forward them to
@@ -108,6 +111,7 @@ def local_judge_model(*, tag: str | None = None, transport: Transport | None = N
     (caught by the scorer as a degraded judge failure — the run preflight checks Ollama up-front).
     """
     model_tag = tag or spec.LOCAL_JUDGE_TAG
+    ctx = num_ctx or spec.LOCAL_JUDGE_NUM_CTX
     send: Transport = transport or _async_post
     url = f"{spec.OLLAMA_BASE_URL}/api/chat"
     sem = asyncio.Semaphore(1)  # one Ollama request in flight at a time (non-blocking)
@@ -121,7 +125,7 @@ def local_judge_model(*, tag: str | None = None, transport: Transport | None = N
             "stream": False,
             "think": False,                    # disable thinking (016 inference)
             "keep_alive": spec.LOCAL_JUDGE_KEEP_ALIVE,  # stay resident across the battery
-            "options": _ollama_options(config),
+            "options": _ollama_options(config, ctx),
         }
         base = config.timeout if config.timeout is not None else spec.MODEL_TIMEOUT
         timeout = max(base, spec.LOCAL_JUDGE_TIMEOUT)  # floor: absorb cold load + slow local gen
@@ -161,18 +165,20 @@ def model_present(tag: str | None = None) -> bool:
     return any(n == tag or n.split(":", 1)[0] == tag for n in installed_tags())
 
 
-def warm_up(*, tag: str | None = None, timeout: float | None = None) -> bool:
+def warm_up(*, tag: str | None = None, timeout: float | None = None, num_ctx: int | None = None) -> bool:
     """Force-load the model into memory so the first SCORED call doesn't hit a cold-load
-    timeout (paging ~27 GB in can take minutes). Sends a 1-token generate with keep_alive
-    so the model stays resident for the run. Returns True if the model responded."""
+    timeout (paging ~27 GB in can take minutes). Sends a 1-token generate with keep_alive so
+    the model stays resident for the run — loaded at the SAME num_ctx the run will use, so the
+    scored calls don't trigger an Ollama reload. Returns True if the model responded."""
     tag = tag or spec.LOCAL_JUDGE_TAG
+    ctx = num_ctx or spec.LOCAL_JUDGE_NUM_CTX
     url = f"{spec.OLLAMA_BASE_URL}/api/chat"
     payload = {
         "model": tag,
         "messages": [{"role": "user", "content": "ok"}],
         "stream": False,
         "keep_alive": spec.LOCAL_JUDGE_KEEP_ALIVE,
-        "options": {"num_predict": 1, "num_ctx": spec.LOCAL_JUDGE_NUM_CTX},
+        "options": {"num_predict": 1, "num_ctx": ctx},
     }
     try:
         _sync_post(url, payload, timeout if timeout is not None else spec.LOCAL_JUDGE_TIMEOUT)

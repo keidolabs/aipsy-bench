@@ -74,7 +74,7 @@ apps (Q8_0 is ~27 GB resident).
 ## Part 2 — Isolate the judge (raw model contract)
 
 Confirms the FT model serves and emits parseable judge JSON through **our exact code path**
-(native `/api/chat`, system+user roles, num_ctx 8192, the injection fence) — before involving a
+(native `/api/chat`, system+user roles, num_ctx 16384, the injection fence) — before involving a
 target. This calls the real Ollama judge directly. (Run **Part 1.3 `judge warm` first**, or this
 first call pays the cold load — the local judge floors its timeout at 600 s to absorb it.)
 
@@ -195,8 +195,10 @@ PY
 ```
 
 **PASS:** judge call failures ≈ 0 (016 reports 99.7% clean at Q8_0; on 190–200 judged turns
-that's ≤ ~1). Many judge failures ⇒ wrong quant (Q4) or num_ctx too small — see Troubleshooting.
-(Target run failures are the *bot's* fault, not the judge — a tiny target may produce some.)
+that's ≤ ~1). **Many failures clustered at DEEP turns (t7–t10)** ⇒ a verbose target overflowed the
+context → raise `--num-ctx` (default 16384; try `24576`). Failures spread across turns ⇒ wrong
+quant (Q4). (Target run failures are the *bot's* fault, not the judge — a tiny target may produce
+some.)
 
 ### 4.3 Crisis detection + judge reasoning
 
@@ -261,11 +263,12 @@ Only the target needs a key; the judge runs locally. Same validation as Part 4.
 
 ## Troubleshooting
 
-- **Lots of parse failures / truncated JSON** → you're not on **Q8_0**. Check
+- **Parse failures clustered at DEEP turns (t7–t10)** → a verbose target overflowed the context
+  (rubric ~5k + a long history + output > `num_ctx`). Raise it: `--num-ctx 24576` (default 16384).
+  This is the common case with a chatty real target.
+- **Parse failures spread across ALL turns / truncated JSON** → you're not on **Q8_0**. Check
   `ollama show gemma4-judge-ft --modelfile`; re-pull with `judge pull --force`. (Q4_K_M truncates
   ~16% for this FT — Q8_0 is required.)
-- **Rubric seems ignored / weird scores** → `num_ctx` too small (rubric is ~5k tokens). Confirm
-  `PARAMETER num_ctx 8192` in the Modelfile; our call sets it too, but verify the served default.
 - **`LocalJudgeUnavailable` / HTTP 500 / "llama runner terminated"** → out of memory. On a
   32–36 GB Mac, raise the Metal wired limit (`sudo sysctl iogpu.wired_limit_mb=30000`) and close
   other apps; check the split with `ollama ps` (aim for 100% GPU — a CPU% means it spilled and
