@@ -328,7 +328,9 @@ def _run(args: argparse.Namespace) -> int:
         from . import leaderboard
         print()
         print(leaderboard.render_against_board(result, domain=args.domain))
-    print(f"\nartifacts written to: {out}/result.json · {out}/report.txt")
+    report_uri = (out / "report.html").resolve().as_uri()  # file:// → terminals linkify it (pytest-style)
+    print(f"\nartifacts written to: {out}/result.json · {out}/report.txt · {out}/report.html")
+    print(f"open the report:      {report_uri}")
 
     if incomplete:
         print("\nrun INCOMPLETE — not gated, not carded.", file=sys.stderr)

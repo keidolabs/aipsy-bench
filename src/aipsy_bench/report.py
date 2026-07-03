@@ -5,6 +5,7 @@ record — this is the derived, CI/human-friendly view.
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 
@@ -261,11 +262,292 @@ def render_report(result_json: dict) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------
+# HTML report — a pytest-html-style browser view of the SAME result.json (§4.3).
+# It is a *derived diagnostic view*, a sibling of report.txt — NOT a new eval-log
+# viewer (Inspect owns that, §12). Self-contained & offline by construction:
+# inline CSS, zero JS (native <details>), no CDN/fonts/images/telemetry — the only
+# outbound URL is the Keido Labs footer link. Deterministic on fixed result.json.
+# All dynamic strings (target ref, judge reasoning, warnings) are HTML-escaped —
+# they are untrusted input (§13.3).
+# --------------------------------------------------------------------------
+
+_HTML_CSS = """
+:root{
+  --bg:#ffffff;--panel:#f6f7f9;--panel2:#eef0f3;--text:#1a1d21;--muted:#6b7280;
+  --border:#e5e7eb;--good:#1e7d32;--warn:#b26a00;--bad:#c62828;--na:#9aa0a6;
+  --good-bg:#e7f4e8;--warn-bg:#fbf0dd;--bad-bg:#fbe4e4;--accent:#3730a3;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1117;--panel:#171a21;--panel2:#1d2129;--text:#e6e6e6;--muted:#9aa0a6;
+  --border:#2a2f3a;--good:#4caf50;--warn:#f9a825;--bad:#ef5350;--na:#9aa0a6;
+  --good-bg:#14301a;--warn-bg:#332600;--bad-bg:#3a1717;--accent:#a5b4fc;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+.wrap{max-width:860px;margin:0 auto;padding:32px 20px 64px;}
+h1{font-size:22px;margin:0 0 2px;letter-spacing:-.01em}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  margin:36px 0 12px;font-weight:600}
+a{color:var(--accent)}
+.sub{color:var(--muted);font-size:13.5px;margin:0 0 4px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.callout{border-radius:10px;padding:14px 16px;margin:16px 0;font-size:13.5px;
+  border:1px solid var(--border)}
+.callout.directional{background:var(--warn-bg);border-color:var(--warn)}
+.callout.local{background:var(--panel2)}
+.callout .tag{font-weight:700;letter-spacing:.02em}
+.verdict{display:flex;align-items:center;gap:16px;border-radius:12px;padding:18px 22px;
+  margin:20px 0;border:1px solid var(--border);background:var(--panel)}
+.verdict .badge{font-size:15px;font-weight:800;letter-spacing:.04em;padding:8px 14px;
+  border-radius:8px;white-space:nowrap}
+.verdict.pass .badge{background:var(--good-bg);color:var(--good)}
+.verdict.fail .badge{background:var(--bad-bg);color:var(--bad)}
+.verdict.incomplete .badge{background:var(--panel2);color:var(--muted)}
+.verdict .at{margin-left:auto;text-align:right}
+.verdict .at b{font-size:30px;font-weight:800;display:block;line-height:1}
+.verdict .at span{font-size:12px;color:var(--muted)}
+.at.good{color:var(--good)}.at.warn{color:var(--warn)}.at.bad{color:var(--bad)}.at.na{color:var(--na)}
+.bar-row{display:flex;align-items:center;gap:12px;margin:7px 0}
+.bar-label{width:150px;color:var(--muted);font-size:13.5px}
+.bar-track{flex:1;height:20px;background:var(--panel2);border-radius:5px;overflow:hidden}
+.bar-fill{height:100%;border-radius:5px}
+.bar-fill.good{background:var(--good)}.bar-fill.warn{background:var(--warn)}
+.bar-fill.bad{background:var(--bad)}.bar-fill.na{background:var(--na)}
+.bar-val{width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.bar-val.good{color:var(--good)}.bar-val.warn{color:var(--warn)}
+.bar-val.bad{color:var(--bad)}.bar-val.na{color:var(--na)}
+details.sc{border:1px solid var(--border);border-radius:10px;margin:8px 0;background:var(--panel);
+  overflow:hidden}
+details.sc.fail{border-color:var(--bad)}
+details.sc.rf{border-color:var(--na)}
+details.sc>summary{cursor:pointer;list-style:none;padding:12px 16px;display:flex;
+  align-items:center;gap:10px;flex-wrap:wrap}
+details.sc>summary::-webkit-details-marker{display:none}
+.sc .sid{font-weight:700;font-family:ui-monospace,Menlo,monospace}
+.sc .st{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.03em}
+.st.ok{background:var(--good-bg);color:var(--good)}
+.st.bad{background:var(--bad-bg);color:var(--bad)}
+.st.rf{background:var(--panel2);color:var(--muted)}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:11.5px;padding:2px 7px;border-radius:5px;background:var(--panel2);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.good{color:var(--good)}.chip.warn{color:var(--warn)}
+.chip.bad{color:var(--bad);background:var(--bad-bg)}.chip.na{color:var(--na)}
+.sc pre{margin:0;padding:14px 16px;background:var(--bg);border-top:1px solid var(--border);
+  font-size:12.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+ul.warns{list-style:none;padding:0;margin:0}
+ul.warns li{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  padding:9px 13px;margin:6px 0;font-size:13px;color:var(--muted)}
+.fails{margin:8px 0 0;padding-left:18px;color:var(--bad);font-size:13.5px}
+.fails li{margin:2px 0}
+footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--border);
+  font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 18px;
+  align-items:baseline;justify-content:space-between}
+footer .repro{font-family:ui-monospace,Menlo,monospace}
+footer .cta{width:100%;color:var(--muted)}
+footer a{text-decoration:none}
+footer a:hover{text-decoration:underline}
+"""
+
+_METRIC_SHORT = {
+    "empathy": "empathy",
+    "tone_consistency": "tone",
+    "crisis_handling": "crisis",
+    "advice_safety": "advice",
+    "boundary_safety": "boundary",
+    "affective_complexity": "affective",
+}
+
+
+def _h(s) -> str:
+    return html.escape(str(s), quote=True)
+
+
+def _band(v) -> str:
+    """CSS band class, mirroring card.py's green/amber/red thresholds (§5 bands)."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return "na"
+    if v >= spec.BAND_CEILING_LOW:
+        return "good"
+    if v >= spec.BAND_MID_LOW:
+        return "warn"
+    return "bad"
+
+
+def _bar_row(label: str, v) -> str:
+    cls = _band(v)
+    pct = (v / 5.0 * 100) if cls != "na" else 0.0
+    return (
+        '<div class="bar-row">'
+        f'<div class="bar-label">{_h(label)}</div>'
+        f'<div class="bar-track"><div class="bar-fill {cls}" style="width:{pct:.1f}%"></div></div>'
+        f'<div class="bar-val {cls}">{_h(_fmt(v))}</div>'
+        "</div>"
+    )
+
+
+def _scenario_details(result_json: dict) -> str:
+    by_scenario = result_json["scores"]["by_scenario"]
+    diag_by_sid = {d["scenario_id"]: d["card"] for d in result_json.get("diagnostics", [])}
+    out = []
+    for sid in sorted(by_scenario):
+        row = by_scenario[sid]
+        card = diag_by_sid.get(sid)
+        run_fail = row.get("run_failure")
+        chips = "".join(
+            f'<span class="chip {_band(row.get(m))}" title="{_h(m)}">'
+            f"{_h(_METRIC_SHORT.get(m, m))} {_h(_fmt(row.get(m)))}</span>"
+            for m in spec.METRICS
+        )
+        if run_fail:
+            cls, st_cls, st_txt = "rf", "rf", "RUN FAILURE"
+            open_attr = ""
+        elif card:
+            cls, st_cls, st_txt = "fail", "bad", "issues"
+            open_attr = " open"
+        else:
+            cls, st_cls, st_txt = "ok", "ok", "ok"
+            open_attr = ""
+        at = row.get("AI_Trust")
+        summary = (
+            f'<summary><span class="sid">{_h(sid)}</span>'
+            f'<span class="st {st_cls}">{st_txt}</span>'
+            f'<span class="chip {_band(at)}">AI-Trust {_h(_fmt(at))}</span>'
+            f'<span class="chips">{chips}</span></summary>'
+        )
+        body = ""
+        if run_fail:
+            body = ("<pre>target failure (error / timeout / rate-limit / refusal / truncation) — "
+                    "a RUN FAILURE, not a low safety score (§6). Re-run this scenario.</pre>")
+        elif card:
+            body = f"<pre>{_h(card)}</pre>"
+        out.append(f'<details class="sc {cls}"{open_attr}>{summary}{body}</details>')
+    return "\n".join(out)
+
+
+def render_html(result_json: dict) -> str:
+    """Render the result.json as a self-contained, offline HTML report (§4.3).
+
+    Sibling of ``render_report``: same data, browser-shaped. Zero JS, inline CSS,
+    no external assets or telemetry; deterministic on fixed input.
+    """
+    from .card import reproduce_command
+
+    t = result_json["target"]
+    overall = result_json["scores"]["overall"]
+    gate = result_json["gate"]
+    warnings = result_json.get("warnings", [])
+    incomplete = result_json.get("incomplete")
+
+    directional = next((w for w in warnings if w.startswith("⚠ DIRECTIONAL")), None)
+    local_judge = next((w for w in warnings if w.startswith("◆ LOCAL JUDGE")), None)
+    other_warnings = [w for w in warnings if w not in (directional, local_judge)]
+
+    ai_trust = overall.get("AI_Trust")
+    title = f"aipsy-bench · {t['ref']} · AI-Trust {_fmt(ai_trust)}"
+
+    # Verdict banner (pytest-style pass/fail summary line).
+    if incomplete:
+        v_cls, v_badge, v_note = "incomplete", "RUN INCOMPLETE", "not gated — partial results (§16)"
+    elif gate["passed"]:
+        v_cls, v_badge = "pass", "✓ GATE PASSED"
+        v_note = gate.get("note") or "all gated metrics meet your thresholds"
+    else:
+        v_cls, v_badge = "fail", "✗ GATE FAILED"
+        v_note = gate.get("note") or f"{len(gate['failures'])} threshold breach(es)"
+
+    parts: list[str] = []
+    parts.append('<div class="wrap">')
+    parts.append("<h1>aipsy-bench · psychological-safety report</h1>")
+    parts.append(
+        f'<p class="sub">target <b>{_h(t["ref"])}</b> <span class="mono">({_h(t["adapter"])})</span>'
+        f' · judges <b>{_h(result_json["judge_panel"])}</b>'
+        f' · mode {_h(result_json["mode"])}</p>'
+    )
+    parts.append(
+        f'<p class="sub mono">aipsy-bench {_h(result_json["tool_version"])}'
+        f' · data {_h(result_json["data_version"])}'
+        f' · run {_h(result_json.get("run_id", ""))}'
+        f' · {_h(result_json.get("timestamp", ""))}</p>'
+    )
+
+    if directional:
+        parts.append(f'<div class="callout directional">{_h(directional)}</div>')
+    if local_judge:
+        parts.append(f'<div class="callout local">{_h(local_judge)}</div>')
+
+    at_band = _band(ai_trust)
+    parts.append(
+        f'<div class="verdict {v_cls}"><span class="badge">{_h(v_badge)}</span>'
+        f'<span class="sub" style="margin:0">{_h(v_note)}</span>'
+        f'<span class="at"><b class="at {at_band}">{_h(_fmt(ai_trust))}</b>'
+        f"<span>AI-Trust</span></span></div>"
+    )
+
+    # Gate failures list (directional recommendation against the dev's thresholds).
+    if not incomplete and gate["failures"]:
+        rows = []
+        for f in gate["failures"]:
+            if f["kind"] == "run_failure":
+                rows.append(f'<li>{_h(f["scenario"])} — RUN FAILURE</li>')
+            else:
+                rows.append(
+                    f'<li>{_h(f["scenario"])} · {_h(f["metric"])} '
+                    f'{_h(_fmt(f["value"]))} &lt; {_h(_fmt(f["threshold"]))}</li>'
+                )
+        parts.append(f'<ul class="fails">{"".join(rows)}</ul>')
+
+    parts.append("<h2>Overall scores</h2>")
+    parts.append("".join(_bar_row(m, overall.get(m)) for m in spec.METRICS))
+
+    parts.append("<h2>Scenarios</h2>")
+    parts.append(_scenario_details(result_json))
+
+    if result_json.get("run_failures"):
+        items = "".join(
+            f'<li>⚠ {_h(rf["scenario_id"])}: target {_h(rf["status"])} at turn {_h(rf["turn"])}</li>'
+            for rf in result_json["run_failures"]
+        )
+        parts.append("<h2>Run failures</h2>")
+        parts.append(f'<ul class="warns">{items}</ul>')
+
+    if other_warnings:
+        parts.append("<h2>Notes</h2>")
+        items = "".join(f"<li>{_h(w)}</li>" for w in other_warnings)
+        parts.append(f'<ul class="warns">{items}</ul>')
+
+    repro = reproduce_command(result_json)
+    parts.append(
+        "<footer>"
+        '<span>Built by <a href="https://www.keidolabs.com">Keido Labs</a>'
+        " · AI Psychology Lab</span>"
+        f'<span class="repro">reproduce: {_h(repro)}</span>'
+        '<span class="cta">Want help closing these gaps? Keido Labs runs clinician-guided '
+        'AI-safety engagements — <a href="https://www.keidolabs.com/contact">keidolabs.com/contact</a>.</span>'
+        "</footer>"
+    )
+    parts.append("</div>")
+
+    body = "\n".join(parts)
+    return (
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{_h(title)}</title>"
+        f"<style>{_HTML_CSS}</style></head>"
+        f"<body>{body}</body></html>\n"
+    )
+
+
 def write_artifacts(log, out_dir: str | Path, *, validation: JudgeValidation, **kwargs) -> dict:
-    """Write ``result.json`` + ``report.txt`` to ``out_dir``; return the result dict."""
+    """Write ``result.json`` + ``report.txt`` + ``report.html`` to ``out_dir``; return the result dict."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     result = to_result_json(log, validation=validation, **kwargs)
     (out / "result.json").write_text(json.dumps(result, indent=2, default=str, ensure_ascii=False))
     (out / "report.txt").write_text(render_report(result))
+    (out / "report.html").write_text(render_html(result))
     return result

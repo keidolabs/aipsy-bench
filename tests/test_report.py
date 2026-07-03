@@ -98,5 +98,80 @@ def test_write_artifacts(tmp_path):
     written = json.loads((tmp_path / "out" / "result.json").read_text())
     assert written["run_id"] == result["run_id"]
     assert (tmp_path / "out" / "report.txt").exists()
+    assert (tmp_path / "out" / "report.html").exists()
     assert written["data_version"] == "v1"
     assert written["mode"] == "benchmark"
+
+
+# ---- HTML report (§4.3) — a derived, offline, self-contained diagnostic view ----
+
+def test_html_report_structure_and_content(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01", "s07"])
+    result = report.to_result_json(log, validation=load_validation())
+    doc = report.render_html(result)
+    assert doc.startswith("<!doctype html>")
+    assert doc.rstrip().endswith("</html>")
+    # the directional honesty guard is carried over, prominently
+    assert "DIRECTIONAL" in doc
+    assert "recommendation, not a rubber-stamp" in doc
+    # every metric is rendered
+    for m in spec.METRICS:
+        assert m in doc
+    assert "AI-Trust" in doc
+
+
+def test_html_report_no_validated_alpha_number(tmp_path):
+    # honesty guard: α is never a number in HTML either (PENDING only, §0.3)
+    log = _run(tmp_path, scenario_ids=["s07"], target="failing")
+    result = report.to_result_json(log, validation=load_validation())
+    doc = report.render_html(result)
+    assert "α=" not in doc or "α=PENDING" in doc
+    # gate failed → the verdict banner says so
+    assert "GATE FAILED" in doc
+
+
+def test_html_report_is_self_contained_and_offline(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01"])
+    result = report.to_result_json(log, validation=load_validation())
+    doc = report.render_html(result)
+    # zero JS, no external assets, no telemetry — opening it must never phone home
+    assert "<script" not in doc.lower()
+    assert 'src=' not in doc
+    assert "<link" not in doc.lower()
+    assert "cdn" not in doc.lower()
+    assert "googleapis" not in doc.lower()
+    assert "http://" not in doc  # no insecure refs
+    # the ONLY outbound URLs are the Keido Labs footer links (no CDN/telemetry)
+    assert doc.count("https://") == doc.count("https://www.keidolabs.com")
+    assert "https://www.keidolabs.com/contact" in doc
+
+
+def test_html_report_has_subtle_keido_branding(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01"])
+    result = report.to_result_json(log, validation=load_validation())
+    doc = report.render_html(result)
+    assert "Built by" in doc and "Keido Labs" in doc
+    # the CTA links out (never an auto-submit / tracking mechanic, §12/§13.6)
+    assert "keidolabs.com" in doc
+    # branding lives in the footer, separated from the verdict — not stamped on the score
+    footer = doc[doc.index("<footer"):]
+    assert "Keido Labs" in footer
+
+
+def test_html_report_escapes_untrusted_target_ref(tmp_path):
+    # target ref / judge reasoning are untrusted (§13.3) — must be HTML-escaped
+    log = _run(tmp_path, scenario_ids=["s01"])
+    xss = '<script>alert("pwn")</script>'
+    result = report.to_result_json(
+        log, validation=load_validation(),
+        target={"adapter": "http", "ref": xss, "model_snapshot": "x"},
+    )
+    doc = report.render_html(result)
+    assert xss not in doc
+    assert "&lt;script&gt;" in doc
+
+
+def test_html_report_deterministic(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01", "s07"])
+    result = report.to_result_json(log, validation=load_validation())
+    assert report.render_html(result) == report.render_html(result)
