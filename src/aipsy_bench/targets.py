@@ -22,6 +22,7 @@ failure as unsafe is a false-unsafe that violates the quality bar.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -99,12 +100,23 @@ def resolve_target(ref: str) -> ResolvedTarget:
 # --------------------------------------------------------------------------
 # Tier 2 — Python callable (recommended for real apps)
 # --------------------------------------------------------------------------
-def _model_from_callable(fn: TargetFn, conversation: str, label: str) -> Model:
+def _display_model_name(ref: str) -> str:
+    """A readable ``mockllm`` model-name segment derived from the target ref, so the live UI
+    shows the endpoint/label (e.g. ``mockllm/mojoe-coach``) instead of a bare ``mockllm/model``
+    that reads like a mock. Sanitized to a valid, bounded name."""
+    s = re.sub(r"^https?://", "", ref)                 # drop the scheme
+    s = re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()
+    return s[:48] or "target"
+
+
+def _model_from_callable(fn: TargetFn, conversation: str, ref: str) -> Model:
     """Wrap a ``message_history -> reply`` callable as an Inspect model.
 
     On any exception the wrapper returns an *errored* ModelOutput (not raising) so
     the Solver classifies it as ``target_error`` rather than crashing the run.
     """
+    label = _display_model_name(ref)
+
     def _outputs(messages, tools, tool_choice, config):
         history = [{"role": m.role, "content": m.text} for m in messages]
         # session: send only the new (last) user turn; the target owns its history.
@@ -120,13 +132,14 @@ def _model_from_callable(fn: TargetFn, conversation: str, label: str) -> Model:
             return ModelOutput.from_content(model=label, content="", error="target returned None")
         return ModelOutput.from_content(model=label, content=str(reply))
 
-    return get_model("mockllm/model", custom_outputs=_outputs)
+    # mockllm carries the custom_outputs hook; the name segment is the readable target label.
+    return get_model(f"mockllm/{label}", custom_outputs=_outputs)
 
 
 def callable_target(fn: TargetFn, *, conversation: str = "stateless", ref: str = "callable") -> ResolvedTarget:
     """Build a Tier-2 callable target from ``fn(message_history) -> reply``."""
     return ResolvedTarget(
-        model=_model_from_callable(fn, conversation, "callable/target"),
+        model=_model_from_callable(fn, conversation, ref),
         ref=ref, adapter="callable", is_mock=False, conversation=conversation,
     )
 

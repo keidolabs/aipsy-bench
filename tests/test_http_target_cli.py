@@ -47,6 +47,17 @@ def test_config_bare_ref_stays_a_string():
 
 
 # --- resolution -----------------------------------------------------------
+def test_display_model_name_reads_as_endpoint():
+    from aipsy_bench.targets import _display_model_name, http_target
+    assert _display_model_name("mojoe-coach") == "mojoe-coach"
+    assert _display_model_name("http://localhost:3000/api/ai-coach/eval") == "localhost-3000-api-ai-coach-eval"
+    # the wrapped model no longer displays as a bare 'model' (which reads like a mock)
+    rt = http_target("http://localhost:3000/eval", transport=lambda *a: {"reply": "x"})
+    assert rt.model.name == "localhost-3000-eval"
+    rt2 = http_target("http://x/eval", ref="mojoe-coach", transport=lambda *a: {"reply": "x"})
+    assert rt2.model.name == "mojoe-coach"
+
+
 def test_flag_resolves_to_http_adapter():
     rt = cli._resolve_run_target(
         _args(["run", "--http-target", "http://localhost:3000/eval",
