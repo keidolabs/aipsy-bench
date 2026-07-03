@@ -212,10 +212,16 @@ def _run(args: argparse.Namespace) -> int:
             print(f"error: no run with id {args.resume!r} under {out}/logs", file=sys.stderr)
             return 2
     else:
+        # The local judge is a single serialized GPU resource, so concurrent scenarios
+        # advance in lockstep and all finish at the end (the task progress bar would sit at
+        # 0/N then jump). Run scenarios sequentially so progress is meaningful and an
+        # interrupt leaves COMPLETE scenarios — no throughput loss, since the judge is the
+        # serialized bottleneck either way (a local target shares the same GPU).
+        eval_kwargs = {"max_samples": 1} if judges == "local" else {}
         # fail_on_error=False → one bad scenario never aborts a long battery; it is
         # logged (run failure / incomplete) and the rest still score.
         log = inspect_eval(task, model=resolved.model, display=args.display,
-                           log_dir=str(out / "logs"), fail_on_error=False)[0]
+                           log_dir=str(out / "logs"), fail_on_error=False, **eval_kwargs)[0]
 
     incomplete = log.status != "success"
     extra_warnings = []
