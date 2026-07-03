@@ -102,6 +102,50 @@ API_ENV_VARS = {
     "google": "GOOGLE_API_KEY",
 }
 
+
+def panel_base(panel: str) -> str:
+    """The lane family of a ``--judges`` string: ``local`` / ``gold`` / ``single``
+    (drops any ``:provider`` suffix). Cheap; used where only the family matters."""
+    return panel.partition(":")[0]
+
+
+def parse_panel(panel: str) -> tuple[str, tuple[str, ...]]:
+    """Resolve a ``--judges`` string to ``(canonical, providers)``.
+
+    * ``local``            → ``("local",  ("local",))``            offline FT judge
+    * ``gold``             → ``("gold",   PROVIDERS)``             the comparable/citable panel
+    * ``single``           → ``("single", (PRIMARY_JUDGE_PROVIDER,))``  primary directional judge
+    * ``single:anthropic`` → ``("single:anthropic", ("anthropic",))``   directional, chosen provider
+
+    The single lane is provider-selectable so a dev who only holds one frontier key
+    can still get a directional read. It stays NON-comparable (never crosses to
+    ``gold``), and ``single:<primary>`` **canonicalizes to plain ``single``** so a
+    ``--judges single`` run and a ``--judges single:openai`` run share one lane
+    (compare/board key on the canonical string). Never touches the frozen ``gold``
+    instrument.
+    """
+    base, _, prov = panel.partition(":")
+    if base == "gold" and not prov:
+        return "gold", PROVIDERS
+    if base == "local" and not prov:
+        return "local", (LOCAL_JUDGE_PROVIDER,)
+    if base == "single":
+        provider = prov or PRIMARY_JUDGE_PROVIDER
+        if provider not in PROVIDERS:
+            raise ValueError(
+                f"unknown single-judge provider {provider!r}; expected one of {list(PROVIDERS)}"
+            )
+        canonical = "single" if provider == PRIMARY_JUDGE_PROVIDER else f"single:{provider}"
+        return canonical, (provider,)
+    raise ValueError(
+        f"unknown judge panel {panel!r} (expected local, gold, single, or single:<provider>)"
+    )
+
+
+# Valid --judges CLI choices (single:<provider> lets a dev use the one frontier key
+# they hold; single:<primary> is accepted but canonicalizes to plain single).
+JUDGE_CHOICES = ("local", "single", *(f"single:{p}" for p in PROVIDERS), "gold")
+
 # --------------------------------------------------------------------------
 # Local judge — the offline, self-contained DEFAULT panel (exp 016-local-judge).
 # A fine-tuned, frozen local instrument: a LoRA-SFT of gemma4-26b distilled toward
@@ -136,6 +180,15 @@ LOCAL_JUDGE_RAM_GB = 27               # ~26.9 GB weights (~29 GB resident with t
 # the OS, so it spills to CPU and is slow (a 32–36 GB Mac works but needs the Metal wired-limit
 # raised — see docs/local-judge.md). A discrete-GPU Linux box (≥16 GB VRAM + ≥64 GB RAM) is fine.
 LOCAL_JUDGE_RAM_RECOMMENDED_GB = 48
+# Realistic viability thresholds for the doctor/init PATH RECOMMENDATION — distinct
+# from the raw load floor above ("fits in memory" ≠ "usable speed" for a 26B judge):
+#  • Apple-Silicon unified memory: 48 GB is the realistic minimum. 32–48 GB technically
+#    loads but runs unsurvivably slowly (KV cache + OS spill), so it is NOT recommended.
+#  • Discrete-GPU box: VRAM is the gate (a 26B on CPU is unusable) — 16 GB VRAM + 64 GB RAM.
+LOCAL_JUDGE_MAC_RAM_MIN_GB = 48        # unified-memory realistic minimum → recommend local
+LOCAL_JUDGE_MAC_RAM_SLOW_GB = 32       # 32–48 GB: loads but unusably slow → steer to API
+LOCAL_JUDGE_GPU_VRAM_MIN_GB = 16       # discrete GPU: minimum VRAM to serve at speed
+LOCAL_JUDGE_GPU_RAM_MIN_GB = 64        # …with this much system RAM alongside
 # Inference contract — replicate the 016/015 served path (open_judges.py
 # OllamaProvider.complete): system+user roles (the gemma4 renderer handles system),
 # num_ctx 8192 (the judge prompt is ~5k tokens; a smaller ctx truncates the rubric),

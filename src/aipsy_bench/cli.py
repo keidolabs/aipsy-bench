@@ -45,12 +45,9 @@ def _sdk_installed(provider: str) -> bool:
 
 def _judge_panel_providers(judges: str) -> set[str]:
     """Frontier providers a judge panel needs (empty for the local panel — its judge
-    runs on the local Ollama server, no provider SDK/key)."""
-    if judges == "gold":
-        return set(spec.PROVIDERS)
-    if judges == "single":
-        return {spec.PRIMARY_JUDGE_PROVIDER}
-    return set()  # local
+    runs on the local Ollama server, no provider SDK/key). Handles single:<provider>."""
+    base, providers = spec.parse_panel(judges)
+    return set() if base == "local" else set(providers)
 
 
 def _required_providers(ref: str, judges: str) -> list[str]:
@@ -543,6 +540,8 @@ def _doctor(args: argparse.Namespace) -> int:
         print(f"    endpoint: {'OK' if res['ok'] else 'FAIL'} — {res['message']}")
         ready = ready and res["ok"]
 
+    _print_path_recommendation()
+
     print(f"\n  resolved: target={http_url or ref}  judges={judges}  data_version={spec.DATA_VERSION}")
     return 0 if (data_ok and ready) else 1
 
@@ -585,6 +584,49 @@ def _print_provider_doctor(providers: list[str], ref: str, judges: str) -> bool:
         pin = spec.JUDGE_MODEL_PINS.get(p, "target")
         print(f"    {p} ({pin}): {env} {'present' if key_ok else 'MISSING'}; SDK {sdk_str}")
     return ready
+
+
+def _print_api_lane_options() -> None:
+    """The frontier-judge menu shared by the doctor recommendation when local is out."""
+    from . import keys
+
+    present = keys.current_keys()
+    for p in spec.PROVIDERS:
+        mark = "key present ✓" if present.get(p) else f"set {spec.API_ENV_VARS[p]}"
+        print(f"      • --judges single:{p:<9} ({spec.JUDGE_MODEL_PINS[p]}) — {mark}")
+    print("      • --judges gold          (all three — the comparable/citable panel)")
+    if not any(present.values()):
+        print("      get started: `aipsy-bench keys set --provider <provider>`  then re-run doctor")
+
+
+def _print_path_recommendation() -> None:
+    """Hardware-aware steer between the two judge regimes (§0.3 local-first posture).
+
+    Local (offline 26B FT judge) is a real hardware gate, and it is PLATFORM-AWARE:
+    a Mac needs ~48 GB unified memory (32–48 GB loads but is unusably slow); a discrete-
+    GPU Linux box needs ~16 GB VRAM + 64 GB RAM. Missing Ollama is a one-time install,
+    NEVER a viability blocker."""
+    from . import local_judge
+
+    v = local_judge.viability()
+    print("\n  Recommended path:")
+    if v["viable"]:
+        caveat = "  ⚠ tight — see docs/local-judge.md" if v["band"] == "tight" else ""
+        print(f"    ✓ LOCAL (priority) — offline FT judge, no API keys. {v['detail']}.{caveat}")
+        if not v["ollama_running"]:
+            print("      one-time setup (not a blocker): install Ollama (ollama.com) + "
+                  "`aipsy-bench judge pull`")
+        elif not v["model_present"]:
+            print("      one-time setup: `aipsy-bench judge pull`  (Ollama is running)")
+        else:
+            print("      ready: `aipsy-bench run --judges local`")
+        return
+    if v["band"] == "slow":  # Mac 32–48 GB: technically runs, but don't recommend it
+        print(f"    ⚠ LOCAL possible but SLOW — {v['detail']}. Recommend the API lane; "
+              "force with `--judges local` only if you accept the speed.")
+    else:
+        print(f"    ✗ LOCAL not viable — {v['detail']} (needs {v['requirement']}). Use the API lane:")
+    _print_api_lane_options()
 
 
 def _provenance(args: argparse.Namespace) -> int:
@@ -784,9 +826,72 @@ def _render_config(params: dict) -> str:
     return "\n".join(lines)
 
 
+def _maybe_set_key(provider: str) -> None:
+    """Offer to save the chosen provider's key to the local .env inline during init
+    (hidden input, never via argv). Skipping is fine — doctor re-surfaces it later."""
+    import getpass
+
+    from . import keys
+
+    var = spec.API_ENV_VARS[provider]
+    if input(f"Set {var} now? [Y/n]: ").strip().lower() not in ("", "y", "yes"):
+        return
+    try:
+        key = getpass.getpass(f"  paste {var} (hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("  skipped")
+        return
+    if key:
+        path = keys.set_provider_key(provider, key)
+        print(f"  saved {var} → {path}  [{keys.mask(key)}]  (gitignored)")
+    else:
+        print("  skipped (nothing entered)")
+
+
+def _init_prompt_single_provider(present: dict[str, bool]) -> str:
+    """Pick the frontier provider for the single lane — the key the dev holds becomes
+    their default — or 'gold' for all three. Offers to set a missing key inline. Returns
+    the canonical panel string (single:<primary> collapses to plain 'single')."""
+    for i, p in enumerate(spec.PROVIDERS, 1):
+        mark = "  ← key present" if present.get(p) else ""
+        print(f"  [{i}] {p}  ({spec.JUDGE_MODEL_PINS[p]}){mark}")
+    gold_choice = len(spec.PROVIDERS) + 1
+    print(f"  [{gold_choice}] gold — all three (comparable/citable, needs 3 keys)")
+    sel = (input("> ").strip() or "1")
+    if sel == str(gold_choice):
+        return "gold"
+    provider = (spec.PROVIDERS[int(sel) - 1]
+                if sel.isdigit() and 1 <= int(sel) <= len(spec.PROVIDERS)
+                else spec.PRIMARY_JUDGE_PROVIDER)
+    if not present.get(provider):
+        _maybe_set_key(provider)
+    return spec.parse_panel(f"single:{provider}")[0]
+
+
 def _init_prompt_judges() -> str:
-    print("Judge lane — [1] local (offline default, no keys)  [2] gold (frontier, needs keys)  [3] single")
-    return {"1": "local", "2": "gold", "3": "single"}.get(input("> ").strip() or "1", "local")
+    """Recommend a judge lane from the machine's hardware (§0.3 local-first): local when
+    the box can run the 26B FT judge at a usable speed (platform-aware), else steer to a
+    single frontier judge the dev holds a key for. Interactive."""
+    from . import keys, local_judge
+
+    v = local_judge.viability()
+    present = keys.current_keys()
+    if v["viable"]:
+        caveat = " (tight)" if v["band"] == "tight" else ""
+        print(f"Judge lane — this machine can run the offline local judge ({v['detail']}{caveat}). "
+              "[recommended]")
+        print("  [1] local (offline, no keys)   [2] single (one frontier key)   "
+              "[3] gold (three keys)")
+        base = {"1": "local", "2": "single", "3": "gold"}.get(input("> ").strip() or "1", "local")
+        return base if base != "single" else _init_prompt_single_provider(present)
+    if v["band"] == "slow":
+        print(f"Judge lane — the local judge would run unusably slowly here ({v['detail']}); "
+              "using API judges (force local later with --judges local if you accept the speed).")
+    else:
+        print(f"Judge lane — the local judge is not viable here ({v['detail']}; "
+              f"needs {v['requirement']}); using API judges.")
+    print("Pick the frontier judge you have a key for (it becomes your run default):")
+    return _init_prompt_single_provider(present)
 
 
 def _init_prompt() -> dict | None:
@@ -846,9 +951,21 @@ def _init(args: argparse.Namespace) -> int:
         step += 1
     if params["kind"] == "http":
         print(f"  {step}. start your dev server, then preflight:  aipsy-bench doctor")
-    elif params.get("judges", "local") == "local":
+        step += 1
+    jbase = spec.panel_base(params.get("judges", "local"))
+    if jbase == "local":
         print(f"  {step}. set up the local judge:  aipsy-bench judge pull")
-    print(f"  {step + 1}. run it:  aipsy-bench run --quick")
+        step += 1
+    elif jbase in ("single", "gold"):
+        from . import keys
+
+        present = keys.current_keys()
+        need = [p for p in sorted(_judge_panel_providers(params["judges"])) if not present.get(p)]
+        if need:
+            print(f"  {step}. set the judge key(s):  "
+                  + "  ".join(f"aipsy-bench keys set --provider {p}" for p in need))
+            step += 1
+    print(f"  {step}. run it:  aipsy-bench run --quick")
     return 0
 
 
@@ -876,9 +993,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--conversation", choices=["stateless", "session"], default=None,
                    help="--http-target history mode: stateless (default; the bench replays the full "
                         "transcript) or session (the target owns history; only the new turn is sent)")
-    r.add_argument("--judges", choices=["local", "single", "gold"], default=None,
+    r.add_argument("--judges", choices=list(spec.JUDGE_CHOICES), default=None, metavar="LANE",
                    help="local = offline FT judge via Ollama (default, no keys); "
-                        "single = primary frontier judge; gold = 3-judge frontier ensemble")
+                        "single[:provider] = one frontier judge (openai|anthropic|google — "
+                        "the key you hold; directional); gold = 3-judge frontier ensemble")
     r.add_argument("--quick", action="store_true", help="smoke subset: one scenario/domain + s06,s07")
     r.add_argument("--scenario", help="comma-separated scenario ids, e.g. s06,s07")
     r.add_argument("--baseline-prompt", action="store_true", help="inject the 014 baseline system prompt (§6 opt-in)")
@@ -917,7 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--http-target", default=None, metavar="URL", help="check readiness for an HTTP /eval target")
     d.add_argument("--no-probe", action="store_true",
                    help="skip the --http-target connectivity probe (which sends one request to your endpoint)")
-    d.add_argument("--judges", choices=["local", "single", "gold"], default=None)
+    d.add_argument("--judges", choices=list(spec.JUDGE_CHOICES), default=None, metavar="LANE")
     d.add_argument("--config", default=None)
     d.set_defaults(func=_doctor)
 
@@ -978,7 +1096,8 @@ def build_parser() -> argparse.ArgumentParser:
     ini.add_argument("--secret-env", default=None, metavar="ENVVAR",
                      help="env var the secret header reads — written to the config as ${ENVVAR}, never the value")
     ini.add_argument("--conversation", choices=["stateless", "session"], default=None)
-    ini.add_argument("--judges", choices=["local", "single", "gold"], default=None, help="default: local")
+    ini.add_argument("--judges", choices=list(spec.JUDGE_CHOICES), default=None, metavar="LANE",
+                     help="default: hardware-recommended (local if viable, else single:<provider>)")
     ini.add_argument("--out", default=None, help=f"config path (default: ./{CONFIG_NAME})")
     ini.add_argument("--force", action="store_true", help="overwrite an existing config")
     ini.set_defaults(func=_init)

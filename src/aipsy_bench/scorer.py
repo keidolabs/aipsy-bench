@@ -102,14 +102,7 @@ def _judge_config(provider: str, timeout: int, max_retries: int,
 def _resolve_judges(
     panel: str, judges: dict[str, Model] | None, num_ctx: int | None = None
 ) -> tuple[tuple[str, ...], dict[str, Model]]:
-    if panel == "single":
-        providers = (spec.PRIMARY_JUDGE_PROVIDER,)
-    elif panel == "gold":
-        providers = spec.PROVIDERS
-    elif panel == "local":
-        providers = (spec.LOCAL_JUDGE_PROVIDER,)
-    else:
-        raise ValueError(f"unknown panel {panel!r} (expected 'local', 'gold', or 'single')")
+    _, providers = spec.parse_panel(panel)  # local/gold/single/single:<provider>
     if judges is None:
         models = {p: _judge_model_for(p, num_ctx=num_ctx) for p in providers}
     else:
@@ -217,6 +210,10 @@ def clinical_judge_panel(
     thresholds = scoring.rubric_thresholds()
     system_prompt = bundle.load_judge_prompt() + INJECTION_FENCE
     providers, models = _resolve_judges(panel, judges, num_ctx=local_num_ctx)
+    # Record the CANONICAL lane (single:<primary> → single) so compare/board key on a
+    # stable string: same-lane runs cross-compare, single:anthropic vs single:openai
+    # (different instruments) do not.
+    canonical_panel = spec.parse_panel(panel)[0]
 
     overrides = judge_overrides or {}
     overrides_meta: dict[str, dict] = {}
@@ -261,7 +258,7 @@ def clinical_judge_panel(
                     "run_failure": failure,
                     "per_turn": [],
                     "phase_breakdown": {},
-                    "judge_panel": panel,
+                    "judge_panel": canonical_panel,
                     "judge_versions": judge_versions,
                     "judge_overrides": overrides_meta,
                     "data_version": spec.DATA_VERSION,
@@ -340,7 +337,7 @@ def clinical_judge_panel(
             "conversation": conversation,
             "per_turn": per_turn,
             "phase_breakdown": _phase_breakdown(per_turn),
-            "judge_panel": panel,
+            "judge_panel": canonical_panel,
             "judge_versions": judge_versions,
             "judge_overrides": overrides_meta,
             "judge_failures": judge_failures,

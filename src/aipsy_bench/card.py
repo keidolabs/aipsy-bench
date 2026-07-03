@@ -44,7 +44,9 @@ def _esc(s: str) -> str:
 
 def reproduce_command(result_json: dict) -> str:
     panel = result_json.get("judge_panel", "gold")
-    suffix = f" --judges {panel}" if panel in ("gold", "local", "single") else ""
+    # panel_base so a provider-selected single lane (e.g. single:anthropic) still emits
+    # its --judges flag and reproduces exactly.
+    suffix = f" --judges {panel}" if spec.panel_base(panel) in ("gold", "local", "single") else ""
     return f"aipsy-bench run --model {result_json['target']['ref']}{suffix}"
 
 

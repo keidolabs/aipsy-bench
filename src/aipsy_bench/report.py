@@ -105,8 +105,12 @@ def to_result_json(
     warnings: list[str] = list(extra_warnings or [])
     if incomplete:
         warnings.append("run INCOMPLETE — partial results; not gated, not carded (§16)")
-    if panel == "single":
-        warnings.append("single-judge panel — scores NOT comparable to published gold numbers")
+    if spec.panel_base(panel) == "single":
+        prov = spec.parse_panel(panel)[1][0]  # name the frontier judge (single is provider-selectable)
+        warnings.append(
+            f"single-judge panel ({prov}: {spec.JUDGE_MODEL_PINS[prov]}) — directional; "
+            "scores NOT comparable to published gold numbers"
+        )
     elif panel == "local":
         warnings.append(local_judge_banner())
     banner = directional_banner(validation)

@@ -17,13 +17,6 @@ from .scorer import aipsy_na_mean, clinical_judge_panel
 from .solver import scripted_dialogue
 from .targets import is_mock_ref
 
-_PANEL_PROVIDERS = {
-    "local": (spec.LOCAL_JUDGE_PROVIDER,),  # the offline, self-contained default
-    "single": (spec.PRIMARY_JUDGE_PROVIDER,),
-    "gold": spec.PROVIDERS,
-}
-
-
 def quick_scenario_ids() -> list[str]:
     """``--quick`` smoke subset: one scenario per domain + both crisis scenarios.
 
@@ -55,15 +48,14 @@ def aipsy_bench(
     """Assemble the benchmark task. ``target`` only decides whether to wire mock
     judges (offline self-test); the model under test is passed to ``eval()``.
     ``conversation`` is recorded for the report (Tier-1/2 session targets set it)."""
-    if judges not in _PANEL_PROVIDERS:
-        raise ValueError(f"judges must be 'single' or 'gold', got {judges!r}")
+    _, judge_providers = spec.parse_panel(judges)  # validates; raises on a bad panel
 
     if scenario_ids is None and quick:
         scenario_ids = quick_scenario_ids()
 
     mock = is_mock_ref(target)
     judge_models = (
-        {p: mock_judge_model() for p in _PANEL_PROVIDERS[judges]} if mock else None
+        {p: mock_judge_model() for p in judge_providers} if mock else None
     )
     to = timeout if timeout is not None else spec.MODEL_TIMEOUT
     mr = max_retries if max_retries is not None else spec.MODEL_MAX_RETRIES

@@ -21,6 +21,7 @@ import asyncio
 import inspect as _inspect
 import json
 import os
+import platform
 import shutil
 import subprocess
 import urllib.error
@@ -202,6 +203,31 @@ def total_ram_gb() -> float | None:
         return None
 
 
+def detect_platform() -> str:
+    """``mac`` = Apple-Silicon unified memory (RAM is the accelerator) · ``linux`` /
+    ``other`` = discrete-GPU box (VRAM is the gate). Drives the viability heuristic."""
+    if platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64"):
+        return "mac"
+    return "linux" if platform.system() == "Linux" else "other"
+
+
+def gpu_vram_gb() -> float | None:
+    """Best-effort largest single-GPU VRAM in GB via ``nvidia-smi`` (NVIDIA/CUDA).
+    ``None`` when no NVIDIA GPU or the tool is absent — i.e. CPU-only, which is
+    unusable for a 26B judge. AMD/ROCm isn't probed (treated as no-GPU)."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode != 0:
+            return None
+        vals = [int(x) for x in out.stdout.split() if x.strip().isdigit()]  # MiB per GPU
+        return max(vals) / 1024 if vals else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def status() -> dict:
     """Snapshot for ``doctor`` / ``judge status`` — no scored calls."""
     running = ollama_running()
@@ -216,6 +242,63 @@ def status() -> dict:
         "ram_gb": ram,
         "ram_tight": ram is not None and ram < spec.LOCAL_JUDGE_RAM_RECOMMENDED_GB,
     }
+
+
+def viability() -> dict:
+    """Can THIS machine run the local judge at a USABLE speed? Pure hardware detection
+    (no scored calls) that powers the ``doctor``/``init`` path recommendation. The local
+    judge is a 26B model, so "fits in memory" isn't enough — the gate is platform-aware:
+
+    * **Mac (Apple-Silicon unified memory)** — RAM is the accelerator. ``ready`` ≥48 GB;
+      ``slow`` 32–48 GB (loads but unsurvivably slow → steer to API, not recommended);
+      ``insufficient`` <32 GB.
+    * **Linux / other (discrete GPU)** — VRAM is the gate (a 26B on CPU is unusable).
+      ``ready`` ≥16 GB VRAM & ≥64 GB RAM; ``tight`` ≥16 GB VRAM but <64 GB RAM;
+      ``insufficient`` GPU present but <16 GB VRAM; ``no_gpu`` no CUDA GPU detected.
+
+    Ollama presence is reported separately and is NEVER a viability blocker — a missing
+    Ollama/model is a one-time install step, not a reason to abandon the local path.
+    """
+    plat = detect_platform()
+    ram = total_ram_gb()
+    ram_str = f"{ram:.0f} GB" if ram else "unknown RAM"
+    running = ollama_running()
+    common = {
+        "platform": plat,
+        "ram_gb": ram,
+        "ollama_running": running,
+        "model_present": model_present() if running else False,
+    }
+
+    if plat == "mac":
+        req = f"{spec.LOCAL_JUDGE_MAC_RAM_MIN_GB} GB unified memory (Apple Silicon)"
+        if ram is None:
+            band, detail = "unknown", "could not read system memory"
+        elif ram >= spec.LOCAL_JUDGE_MAC_RAM_MIN_GB:
+            band, detail = "ready", f"{ram_str} unified memory (≥ {spec.LOCAL_JUDGE_MAC_RAM_MIN_GB} GB)"
+        elif ram >= spec.LOCAL_JUDGE_MAC_RAM_SLOW_GB:
+            band, detail = "slow", (f"{ram_str} unified memory — loads but runs a 26B judge "
+                                    f"unusably slowly ({spec.LOCAL_JUDGE_MAC_RAM_MIN_GB} GB+ recommended)")
+        else:
+            band, detail = "insufficient", f"{ram_str} unified memory < {spec.LOCAL_JUDGE_MAC_RAM_SLOW_GB} GB"
+        return {**common, "vram_gb": None, "band": band, "viable": band == "ready",
+                "requirement": req, "detail": detail}
+
+    # discrete-GPU box (linux/other): VRAM gates; system RAM is secondary
+    vram = gpu_vram_gb()
+    req = f"{spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB VRAM + {spec.LOCAL_JUDGE_GPU_RAM_MIN_GB} GB RAM"
+    vram_str = f"{vram:.0f} GB" if vram else None
+    if vram is None:
+        band, detail, viable = "no_gpu", "no CUDA GPU detected — a 26B judge on CPU is unusably slow", False
+    elif vram < spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB:
+        band, detail, viable = "insufficient", f"GPU has {vram_str} VRAM < {spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB", False
+    elif ram is not None and ram < spec.LOCAL_JUDGE_GPU_RAM_MIN_GB:
+        band, detail, viable = "tight", (f"{vram_str} VRAM (≥ {spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB); "
+                                         f"{ram_str} RAM < {spec.LOCAL_JUDGE_GPU_RAM_MIN_GB} GB (tight)"), True
+    else:
+        band, detail, viable = "ready", f"{vram_str} VRAM + {ram_str} RAM", True
+    return {**common, "vram_gb": vram, "band": band, "viable": viable,
+            "requirement": req, "detail": detail}
 
 
 # --------------------------------------------------------------------------

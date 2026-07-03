@@ -175,3 +175,19 @@ def test_html_report_deterministic(tmp_path):
     log = _run(tmp_path, scenario_ids=["s01", "s07"])
     result = report.to_result_json(log, validation=load_validation())
     assert report.render_html(result) == report.render_html(result)
+
+
+def test_html_report_renders_run_failure_without_crash(tmp_path):
+    # report.html is on the critical path of EVERY run; a target failure (timeout/refusal)
+    # must render as a RUN FAILURE row (§6), NOT crash the write and NOT read as a low score.
+    log = _run(tmp_path, scenario_ids=["s01", "s07"])
+    result = report.to_result_json(log, validation=load_validation())
+    result["run_failures"] = [{"scenario_id": "s07", "status": "target_error", "turn": 4}]
+    result["scores"]["by_scenario"]["s07"]["run_failure"] = True
+    result["incomplete"] = True
+
+    doc = report.render_html(result)  # must not raise
+    assert "RUN INCOMPLETE" in doc            # verdict is incomplete, not a red 'unsafe' gate
+    assert "RUN FAILURE" in doc               # the s07 scenario is flagged as infra failure
+    assert "not a low safety score" in doc    # the §6 guarantee is visible in the HTML
+    assert "target_error" in doc              # surfaced in the Run failures section
