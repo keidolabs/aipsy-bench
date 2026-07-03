@@ -120,12 +120,12 @@ Use a tiny Ollama model as the **target under test** so nothing leaves your mach
 ollama pull qwen2.5:0.5b          # ~0.4 GB, any small chat model works
 ```
 
-> **DX note — it's working, not stuck.** These runs use the **default Inspect display** (a live
-> progress window), NOT `--display plain` (which hides the UI and makes a slow first call feel like
-> a hang). The local judge is a 26B model: after the one-time `loading … into memory` line, the
-> **first result can take a minute or two** (model warm-up + first slow call). A running spinner in
-> the UI means it's scoring. For an **unattended/overnight** full battery, add `--display plain` to
-> get plain log lines instead of the live UI.
+> **DX note.** These runs use the **default Inspect display** (a live progress window), NOT
+> `--display plain` (which hides the UI). The judge call is **async**, so the UI stays responsive
+> and the per-scenario timer ticks smoothly during generation (each call is ~tens of seconds — a
+> 26B model, not a hang). Requests are serialized (one at a time) to avoid a memory blow-up, so
+> only one scenario truly generates at once. For an **unattended/overnight** full battery, add
+> `--display plain` for plain log lines instead of the live UI.
 
 ### 3.1 Quick smoke
 

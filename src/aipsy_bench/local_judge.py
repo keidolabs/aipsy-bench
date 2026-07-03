@@ -17,6 +17,8 @@ itself needs only a running Ollama with the tag present — no key, no network.
 
 from __future__ import annotations
 
+import asyncio
+import inspect as _inspect
 import json
 import os
 import shutil
@@ -26,12 +28,14 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 from inspect_ai.model import GenerateConfig, Model, ModelOutput, get_model
 
 from . import spec
 
-# (url, json_payload, timeout_s) -> parsed JSON response dict. Injectable offline.
-Transport = Callable[[str, dict, "float | None"], dict]
+# (url, json_payload, timeout_s) -> response dict; sync OR async (awaited if a coroutine).
+# Injectable offline for tests.
+Transport = Callable[[str, dict, "float | None"], object]
 
 
 class LocalJudgeUnavailable(RuntimeError):
@@ -47,7 +51,23 @@ _SETUP_HINT = (
 # --------------------------------------------------------------------------
 # The judge model (native Ollama /api/chat)
 # --------------------------------------------------------------------------
-def _default_transport(url: str, payload: dict, timeout: float | None) -> dict:
+async def _async_post(url: str, payload: dict, timeout: float | None) -> dict:
+    """The SCORING transport — async so a judge call never blocks Inspect's event loop.
+    A blocking call would freeze the live TUI for the whole (10–40 s) generation; awaiting
+    httpx yields control so the UI stays responsive. httpx is an inspect-ai dependency."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+    except (httpx.HTTPError, OSError) as e:
+        raise LocalJudgeUnavailable(
+            f"could not reach the local Ollama judge at {url} ({e}).\n{_SETUP_HINT}"
+        ) from e
+
+
+def _sync_post(url: str, payload: dict, timeout: float | None) -> dict:
+    """The PREFLIGHT transport (``warm_up``) — sync urllib, runs in the CLI off the event loop."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url, data=data, method="POST", headers={"Content-Type": "application/json"}
@@ -79,17 +99,20 @@ def _ollama_options(config: GenerateConfig) -> dict:
 def local_judge_model(*, tag: str | None = None, transport: Transport | None = None) -> Model:
     """The local FT judge as an Inspect model (native Ollama ``/api/chat``).
 
-    The scorer passes ``[system, user]`` messages + a GenerateConfig; we forward them
-    to Ollama with the frozen options. ``transport`` is injectable so offline tests
-    exercise the request/parse path with no server. A connection failure raises
-    ``LocalJudgeUnavailable`` (caught by the scorer as a judge failure — degraded, not
-    crashed); the run preflight checks Ollama up-front so this is rare in practice.
+    The scorer passes ``[system, user]`` messages + a GenerateConfig; we forward them to
+    Ollama with the frozen options. The call is **async** (httpx) so it never blocks Inspect's
+    event loop — the live TUI stays responsive while the model generates. Requests are
+    **serialized** (one in flight at a time) to match the validated sequential 016 inference and
+    avoid running multiple KV caches at once (OOM on a memory-tight box). ``transport`` is
+    injectable for tests (sync or async); a connection failure raises ``LocalJudgeUnavailable``
+    (caught by the scorer as a degraded judge failure — the run preflight checks Ollama up-front).
     """
     model_tag = tag or spec.LOCAL_JUDGE_TAG
-    send: Transport = transport or _default_transport
+    send: Transport = transport or _async_post
     url = f"{spec.OLLAMA_BASE_URL}/api/chat"
+    sem = asyncio.Semaphore(1)  # one Ollama request in flight at a time (non-blocking)
 
-    def _outputs(messages, tools, tool_choice, config):
+    async def _outputs(messages, tools, tool_choice, config):
         # Preserve system + user roles exactly (== open_judges: [{system}, *messages]).
         msgs = [{"role": m.role, "content": m.text} for m in messages]
         payload = {
@@ -102,8 +125,11 @@ def local_judge_model(*, tag: str | None = None, transport: Transport | None = N
         }
         base = config.timeout if config.timeout is not None else spec.MODEL_TIMEOUT
         timeout = max(base, spec.LOCAL_JUDGE_TIMEOUT)  # floor: absorb cold load + slow local gen
-        body = send(url, payload, timeout)
-        content = ((body or {}).get("message") or {}).get("content", "")
+        async with sem:
+            result = send(url, payload, timeout)
+            if _inspect.isawaitable(result):
+                result = await result
+        content = ((result or {}).get("message") or {}).get("content", "")
         return ModelOutput.from_content(model=f"ollama/{model_tag}", content=content)
 
     return get_model("mockllm/model", custom_outputs=_outputs)
@@ -149,7 +175,7 @@ def warm_up(*, tag: str | None = None, timeout: float | None = None) -> bool:
         "options": {"num_predict": 1, "num_ctx": spec.LOCAL_JUDGE_NUM_CTX},
     }
     try:
-        _default_transport(url, payload, timeout if timeout is not None else spec.LOCAL_JUDGE_TIMEOUT)
+        _sync_post(url, payload, timeout if timeout is not None else spec.LOCAL_JUDGE_TIMEOUT)
         return True
     except LocalJudgeUnavailable:
         return False

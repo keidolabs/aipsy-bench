@@ -20,7 +20,7 @@ from aipsy_bench.compare import CompareError, compare
 from aipsy_bench.dataset import build_dataset
 from aipsy_bench.local_judge import (
     LocalJudgeUnavailable,
-    _default_transport,
+    _sync_post,
     local_judge_model,
 )
 from aipsy_bench.report import to_result_json
@@ -93,10 +93,24 @@ def test_request_shape_matches_016_contract(tmp_path):
     assert opts["num_predict"] == spec.JUDGE_MAX_TOKENS
 
 
-def test_default_transport_raises_clean_unavailable():
+def test_sync_post_raises_clean_unavailable():
     # a closed local port → URLError → a friendly LocalJudgeUnavailable, not a raw stack
     with pytest.raises(LocalJudgeUnavailable):
-        _default_transport("http://127.0.0.1:1/api/chat", {"model": "x", "messages": []}, 1)
+        _sync_post("http://127.0.0.1:1/api/chat", {"model": "x", "messages": []}, 1)
+
+
+def test_async_transport_is_awaited(tmp_path):
+    # the scoring path is async (non-blocking) — an async transport must be awaited, not
+    # returned as a coroutine. This is what keeps Inspect's live TUI responsive.
+    captured: list = []
+
+    async def transport(url, payload, timeout):
+        captured.append(payload)
+        return _safe_judge_response()
+
+    log = _run_local(tmp_path, scenario_ids=["s01"], transport=transport)
+    assert captured, "the async transport was awaited"
+    assert log.samples[0].scores["clinical_judge_panel"].value["empathy"] == 5
 
 
 # --------------------------------------------------------------------------
@@ -188,7 +202,7 @@ def test_warm_up_sends_keep_alive_with_long_timeout(monkeypatch):
         captured["payload"], captured["timeout"] = payload, timeout
         return {"message": {"content": "ok"}}
 
-    monkeypatch.setattr(local_judge, "_default_transport", fake)
+    monkeypatch.setattr(local_judge, "_sync_post", fake)
     assert local_judge.warm_up() is True
     assert captured["payload"]["keep_alive"] == spec.LOCAL_JUDGE_KEEP_ALIVE
     assert captured["payload"]["options"]["num_ctx"] == spec.LOCAL_JUDGE_NUM_CTX
@@ -201,5 +215,5 @@ def test_warm_up_false_when_unavailable(monkeypatch):
     def boom(url, payload, timeout):
         raise local_judge.LocalJudgeUnavailable("down")
 
-    monkeypatch.setattr(local_judge, "_default_transport", boom)
+    monkeypatch.setattr(local_judge, "_sync_post", boom)
     assert local_judge.warm_up() is False

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "inspect-ai>=0.3.235",
+    "httpx",              # async local-judge transport (also an inspect-ai dep; declared as we import it)
     "pydantic>=2",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",

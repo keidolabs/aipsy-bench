@@ -195,6 +195,7 @@ name = "aipsy-bench"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "inspect-ai" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -226,6 +227,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'" },
     { name = "google-genai", marker = "extra == 'google'" },
+    { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'local'", specifier = ">=0.20" },
     { name = "inspect-ai", specifier = ">=0.3.235" },
     { name = "openai", marker = "extra == 'local'" },
