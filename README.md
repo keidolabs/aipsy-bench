@@ -37,13 +37,20 @@ uv run aipsy-bench judge status        # verify Ollama + the model are ready
 # Run any target, judged locally (free). Only the TARGET may need a key:
 uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --quick
 
-# Prefer the frontier judges (the official/citable lane)? Install the SDKs + keys:
-uv sync --all-extras                   # or: uv sync --extra openai/anthropic/google
-uv run aipsy-bench run --model openai/gpt-5.4-mini --judges gold
+# Benchmark YOUR OWN app: add a stateless /eval endpoint, point the CLI at it (no Python).
+# With your dev server up (npm run dev / uvicorn) + the local judge, this is 100% offline.
+uv run aipsy-bench init --http-target http://localhost:3000/eval   # scaffold aipsy-bench.yaml
+uv run aipsy-bench doctor                                          # preflight + probe the endpoint
+uv run aipsy-bench run --judges local --quick                      # the URL is yours; --header if gated
+# → full recipe (endpoint snippets + the pre-release loop): docs/adapters/eval-endpoint.md
 
 # Browse the public benchmark content:
 uv run aipsy-bench scenarios list
 ```
+
+> **Prefer the frontier judges** (the official/citable `gold` lane) instead of the local
+> default? That's an alternative lane — install the provider SDKs + keys
+> (`uv sync --all-extras`) and add `--judges gold`. See [API keys](#api-keys-your-keys-your-cost).
 
 > **The local judge is a different instrument than the frontier gold panel.** A local score
 > is comparable to other local runs only, never to gold — the two are separate lanes. See

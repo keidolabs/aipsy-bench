@@ -44,41 +44,53 @@ export async function POST(req: Request) {
 ```
 
 This reuses the *real* prompt assembly (no cross-language prompt drift) and the real
-coach model, but bypasses Supabase / the rate limit / SSE. Keep it internal (the
-`x-eval-secret` header), since it intentionally has no user rate limit.
+coach model, but bypasses Supabase / the rate limit / SSE. Because it intentionally has no
+user rate limit, the load-bearing guard is **env-gating it out of production** (refuse to
+serve unless dev/test); the `x-eval-secret` header shown here is the belt-and-suspenders for a
+staging/preview deploy — **on a pure localhost run it's optional** (nothing off your machine
+reaches `127.0.0.1`). See [eval-endpoint.md](./eval-endpoint.md#protecting-the-endpoint).
 
-## 2. aipsy-bench side — Tier-1 HTTP adapter
+## 2. aipsy-bench side — point the CLI at it (no Python)
 
-```python
-from aipsy_bench.targets import http_target
-from aipsy_bench.task import aipsy_bench
-from inspect_ai import eval as inspect_eval
-
-target = http_target(
-    "https://mojoe.app/api/ai-coach/eval",
-    headers={"x-eval-secret": "<EVAL_SECRET>"},
-    conversation="stateless",       # the /eval endpoint is stateless; we own history
-    ref="mojoe-coach",
-)
-log = inspect_eval(aipsy_bench(judges="gold"), model=target.model)[0]
-```
-
-Or the CLI (preflight cost first):
+Local dev is the primary path: run `npm run dev`, then benchmark `localhost` with the local
+judge — fully offline, no keys.
 
 ```bash
-aipsy-bench run --target mock --dry-run            # sanity-check call counts/cost
-aipsy-bench run --model <ref> --judges gold --against-board   # vanilla mojoe via Tier-0, for a baseline
+aipsy-bench doctor --http-target http://localhost:3000/api/ai-coach/eval   # preflight
+aipsy-bench run \
+  --http-target http://localhost:3000/api/ai-coach/eval \
+  --header x-eval-secret:$EVAL_SECRET \
+  --ref mojoe-coach \
+  --judges local --quick                                                   # fast inner loop
 ```
+
+Or commit it to `aipsy-bench.yaml` so the whole team runs a bare `aipsy-bench run`:
+
+```yaml
+target:
+  http: http://localhost:3000/api/ai-coach/eval
+  headers: { x-eval-secret: ${EVAL_SECRET} }
+  conversation: stateless          # the /eval endpoint is stateless; the bench owns history
+  ref: mojoe-coach
+judges: local
+```
+
+Only reach for a Python driver if you must benchmark the *production* path (auth handshake,
+server sessions, SSE) instead of a stateless endpoint — see [`callable.md`](./callable.md).
 
 ## 3. The cold-start loop, without us in the loop
 
-1. **Score it** — `aipsy-bench run … --judges gold` against the endpoint.
+1. **Score it** — `aipsy-bench run … --judges local --quick --out run/a` against the endpoint
+   (fast, offline, directional). The full battery (drop `--quick`) is the gate before you ship.
 2. **Read the card** — a phase-localized remediation card ("crisis_handling fails in
-   the Pressure phase of s06, here's the failing turn + the fix").
+   the Pressure phase of s06, here's the failing turn + the fix"): `run/a/report.txt`.
 3. **Fix** — tweak `buildCoachPrompt` (e.g. add an always-on crisis-resource hand-off).
-4. **Re-run + diff** — `aipsy-bench compare base.eval cand.eval` shows the delta and
-   fails CI if safety regressed.
-5. **Reference frame** — `--against-board` overlays the score on the vanilla baselines.
+4. **Re-run + diff** — `aipsy-bench run … --out run/b` then `aipsy-bench compare run/a run/b`
+   shows the delta and fails CI if safety regressed.
+5. **Stay in one lane** — a `local` score compares to your own prior `local` runs, never to the
+   frontier board. `--against-board` (overlay on the published vanilla baselines) is the
+   **gold** lane — switch to `--judges gold` (provider keys) only when you want that citable
+   reference frame.
 
 ## Correctness guarantee on a real, rate-limited target
 

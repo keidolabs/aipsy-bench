@@ -7,8 +7,13 @@ your bot is reached. Pick the lowest tier that fits.
 | Tier | Use it when | How |
 |---|---|---|
 | **0 — model string** | ranking a bare foundational model | `aipsy-bench run --model openai/gpt-5.4-mini` |
-| **1 — HTTP** | a bot behind a thin **stateless** OpenAI-chat-style proxy | `http_target(url, headers=...)` |
-| **2 — Python callable** | **a real deployed app** (auth, sessions, streaming, rate limits) | `callable_target(fn)` |
+| **1 — HTTP** | **your own app** behind a thin **stateless** `/eval` endpoint | `aipsy-bench run --http-target URL --header NAME:VALUE` — CLI-native, **no Python** |
+| **2 — Python callable** | a target that *must* own auth handshake / sessions / SSE | `callable_target(fn)` (a ~30-line driver) |
+
+**Most adopters want Tier 1.** Add one stateless `/eval` endpoint and drive it straight from
+the CLI — see the [`/eval` cookbook](./eval-endpoint.md) (framework-agnostic, localhost-first,
+fully offline with the local judge). Only reach for Tier 2 when a stateless endpoint is
+genuinely impossible.
 
 ## Recommended integration for a real app: a stateless `/eval` endpoint
 
@@ -31,8 +36,16 @@ Why this is the highest-leverage 30 lines you'll write:
   (e.g. `buildCoachPrompt`), so the target keeps its own persona; the Python
   adapter never re-implements your prompt logic.
 
-Then drive it with the Tier-1 HTTP adapter (if it speaks `{messages}->{reply}`) or
-a trivial Tier-2 callable. See [`eval-endpoint.md`](./eval-endpoint.md).
+Then drive it straight from the CLI — no Python:
+
+```bash
+aipsy-bench init --http-target <url>    # scaffold aipsy-bench.yaml (optional)
+aipsy-bench doctor                      # preflight + probe the endpoint (wrong port/path/secret?)
+aipsy-bench run --judges local --quick  # fully offline
+```
+
+See the full recipe (endpoint snippets for Next.js / Express / FastAPI + the offline pre-release
+loop) in [`eval-endpoint.md`](./eval-endpoint.md).
 
 ## `conversation: stateless | session`
 

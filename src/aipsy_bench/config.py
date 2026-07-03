@@ -8,12 +8,41 @@ change the frozen content or the judge pins (those keys are ignored).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CONFIG_NAME = "aipsy-bench.yaml"
+
+
+class HttpTargetSpec(BaseModel):
+    """A Tier-1 HTTP ``/eval`` endpoint, declared in ``aipsy-bench.yaml`` so an
+    app dev never writes Python to benchmark their own bot (§6). Shape:
+
+    ```yaml
+    target:
+      http: http://localhost:3000/api/ai-coach/eval
+      headers: { x-eval-secret: ${EVAL_SECRET} }   # ${ENV} expanded at load
+      conversation: stateless                        # stateless (default) | session
+    ```
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    http: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    conversation: str = "stateless"
+    ref: str | None = None
+
+    @field_validator("headers")
+    @classmethod
+    def _expand_env(cls, headers: dict[str, str]) -> dict[str, str]:
+        # ``${EVAL_SECRET}`` / ``$EVAL_SECRET`` in a *committed* yaml resolves from the
+        # environment at load — so the secret stays out of the repo. Unknown vars pass
+        # through verbatim (surfacing a clear "unauthorized" from the endpoint, not a crash).
+        return {k: os.path.expandvars(v) for k, v in headers.items()}
 
 
 class ProjectConfig(BaseModel):
@@ -21,7 +50,8 @@ class ProjectConfig(BaseModel):
     # silently dropped; config cannot subvert the frozen invariants.
     model_config = ConfigDict(extra="ignore")
 
-    target: str | None = None
+    # A bare ref string ("mock", "openai/gpt-5.4-mini") OR an HTTP endpoint mapping.
+    target: str | HttpTargetSpec | None = None
     judges: str | None = None
     scenario: str | None = None        # comma-separated ids
     quick: bool = False

@@ -15,9 +15,9 @@ from pathlib import Path
 from inspect_ai import eval as inspect_eval
 
 from . import __version__, bundle, report, spec
-from .config import load_config
+from .config import CONFIG_NAME, HttpTargetSpec, load_config
 from .gate import gate_result
-from .targets import is_mock_ref, resolve_target
+from .targets import ResolvedTarget, http_target, is_mock_ref, resolve_target
 from .task import aipsy_bench, quick_scenario_ids
 from .validation import load_validation
 
@@ -130,6 +130,67 @@ def _parse_judge_overrides(items: list[str] | None) -> dict[str, str] | None:
     return out
 
 
+def _parse_headers(items: list[str] | None) -> dict[str, str]:
+    """Parse repeated ``--header NAME:VALUE`` flags into a dict (split on the first ``:``)."""
+    out: dict[str, str] = {}
+    for item in items or []:
+        if ":" not in item:
+            raise ValueError(f"--header must be NAME:VALUE, got {item!r}")
+        name, value = item.split(":", 1)
+        name = name.strip()
+        if not name:
+            raise ValueError(f"--header needs a name, got {item!r}")
+        out[name] = value.strip()
+    return out
+
+
+def _http_target_params(args: argparse.Namespace, cfg) -> tuple[str, dict[str, str], str, str] | None:
+    """Merge flags + config into ``(url, headers, conversation, ref)`` for an HTTP target.
+
+    Returns ``None`` when no HTTP endpoint is specified. CLI flags override a
+    config-declared endpoint (headers merge, the flag winning per key; ``${ENV}`` in the
+    config is already expanded). Uses ``getattr`` so it works from the ``doctor`` namespace
+    too (which omits ``--header/--ref/--conversation``).
+    """
+    cfg_http = cfg.target if isinstance(cfg.target, HttpTargetSpec) else None
+    url = getattr(args, "http_target", None) or (cfg_http.http if cfg_http else None)
+    if not url:
+        return None
+    headers = {**(cfg_http.headers if cfg_http else {}), **_parse_headers(getattr(args, "header", None))}
+    conversation = getattr(args, "conversation", None) or (cfg_http.conversation if cfg_http else None) or "stateless"
+    ref = getattr(args, "ref", None) or (cfg_http.ref if cfg_http else None) or url
+    return url, headers, conversation, ref
+
+
+def _resolve_run_target(args: argparse.Namespace, cfg) -> ResolvedTarget | None:
+    """Resolve the target from flags + config, preferring a Tier-1 HTTP endpoint.
+
+    An ``--http-target`` (or a ``target: {http: …}`` block in the yaml) is the
+    zero-Python path for an app dev: the CLI builds the HTTP adapter directly — no
+    driver script. Returns ``None`` if no target is specified at all.
+    """
+    cfg_http = cfg.target if isinstance(cfg.target, HttpTargetSpec) else None
+    have_http = bool(args.http_target or cfg_http)
+
+    if args.http_target and (args.model or args.target):
+        raise ValueError("--http-target cannot be combined with --model/--target")
+    if (args.header or args.ref or args.conversation) and not have_http:
+        raise ValueError(
+            "--header/--ref/--conversation apply to an HTTP target — pass --http-target "
+            "<url> or set target: {http: …} in aipsy-bench.yaml"
+        )
+
+    params = _http_target_params(args, cfg)
+    if params:
+        url, headers, conversation, ref = params
+        return http_target(url, headers=headers, conversation=conversation, ref=ref)
+
+    ref = args.model or args.target or (cfg.target if isinstance(cfg.target, str) else None)
+    if not ref:
+        return None
+    return resolve_target(ref)
+
+
 def estimate(n_scenarios: int, judges: str) -> dict:
     target_calls = n_scenarios * spec.N_TURNS
     judge_calls = target_calls * (3 if judges == "gold" else 1)
@@ -152,9 +213,16 @@ def estimate(n_scenarios: int, judges: str) -> dict:
 
 def _run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
-    ref = args.model or args.target or cfg.target
-    if not ref:
-        print("error: specify --target <ref> or --model <ref> (or set it in aipsy-bench.yaml)", file=sys.stderr)
+    try:
+        # Resolve up front (non-network: builds the adapter, makes no call) so the
+        # dry-run note + preflight can branch on the real adapter.
+        resolved = _resolve_run_target(args, cfg)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if resolved is None:
+        print("error: specify --target <ref>, --model <ref>, or --http-target <url> "
+              "(or set target: in aipsy-bench.yaml)", file=sys.stderr)
         return 2
 
     judges = args.judges or cfg.judges or "local"
@@ -179,6 +247,9 @@ def _run(args: argparse.Namespace) -> int:
         print(f"  target calls: {est['target_calls']}   judge calls: {est['judge_calls']}   total: {est['total_calls']}")
         if est["local_judge"]:
             print(f"  judge: local Ollama ({spec.LOCAL_JUDGE_VERSION}) — free, runs on your machine")
+        if resolved.adapter in ("http", "callable"):
+            print(f"  target: your own endpoint ({resolved.meta.get('url', resolved.ref)}) — those calls "
+                  "hit your server, not a billed provider (the cost line below assumes a paid API)")
         print(f"  est. cost: ~${est['est_cost_usd']:.2f}   est. wall-time: ~{est['est_minutes']:.1f} min")
         print("  (rough planning estimate — not billing-accurate; no scored calls made)")
         return 0
@@ -187,8 +258,14 @@ def _run(args: argparse.Namespace) -> int:
         print(f"aborting: estimated ~${est['est_cost_usd']:.2f} exceeds --max-cost ${max_cost:.2f}", file=sys.stderr)
         return 2
 
-    if not is_mock_ref(ref):  # a real run needs the provider SDKs (optional extras)
-        missing = [p for p in _required_providers(ref, judges) if not _sdk_installed(p)]
+    if not resolved.is_mock:  # a real run needs the provider SDKs (optional extras)
+        # An http/callable target is reached without a provider SDK (plain HTTP), so only
+        # the judge panel needs SDKs there; a Tier-0 model string also needs its own provider.
+        required = (
+            _required_providers(resolved.ref, judges) if resolved.adapter == "model"
+            else sorted(_judge_panel_providers(judges))
+        )
+        missing = [p for p in required if not _sdk_installed(p)]
         if missing:
             print(_missing_sdk_hint(missing), file=sys.stderr)
             return 2
@@ -198,10 +275,10 @@ def _run(args: argparse.Namespace) -> int:
                 print(err, file=sys.stderr)
                 return 2
 
-    resolved = resolve_target(ref)
     task = aipsy_bench(
-        target=ref, judges=judges, scenario_ids=scenario_ids,
+        target=resolved.ref, judges=judges, scenario_ids=scenario_ids,
         quick=quick, baseline_prompt=args.baseline_prompt,
+        conversation=resolved.conversation,
         timeout=args.timeout, max_retries=args.max_retries,
         max_connections=args.max_connections, judge_overrides=judge_overrides,
         local_num_ctx=args.num_ctx,
@@ -416,8 +493,12 @@ def _git_sha() -> str:
 def _doctor(args: argparse.Namespace) -> int:
     """Preflight: data SHA, judge keys for the panel, resolved config. No scored calls."""
     cfg = load_config(args.config)
-    ref = args.model or args.target or cfg.target or "mock"
+    cfg_http = cfg.target if isinstance(cfg.target, HttpTargetSpec) else None
+    http_url = args.http_target or (cfg_http.http if cfg_http else None)
     judges = args.judges or cfg.judges or "local"
+    ref = None if http_url else (
+        args.model or args.target or (cfg.target if isinstance(cfg.target, str) else None) or "mock"
+    )
 
     print("aipsy-bench doctor (preflight — no scored calls)\n")
     try:
@@ -432,17 +513,35 @@ def _doctor(args: argparse.Namespace) -> int:
     if judges == "local":
         # The headline default: report local-judge readiness regardless of target.
         ready = _print_local_judge_doctor()
-        if is_mock_ref(ref):
+        if http_url:
+            print(f"    note: target is your HTTP endpoint ({http_url}) — no provider key needed for "
+                  "the target; the block above is your local-judge readiness. Start the endpoint "
+                  "before `run`.")
+        elif is_mock_ref(ref):
             print("    note: --target mock uses offline mock judges (no Ollama needed); the "
                   "block above is your readiness for a REAL target.")
         else:  # a real target still needs ITS provider key/SDK
             ready = _print_provider_doctor([ref.split("/", 1)[0]], ref, judges) and ready
+    elif http_url:  # frontier judges over an HTTP target: only the judge panel needs keys
+        print(f"  target: HTTP endpoint {http_url} — no provider key needed; ensure it is reachable.")
+        ready = _print_provider_doctor(sorted(_judge_panel_providers(judges)), "__http__", judges)
     elif is_mock_ref(ref):
         print("  judges: mock target → offline mock judges, no keys or SDKs needed")
     else:
         ready = _print_provider_doctor(_required_providers(ref, judges), ref, judges)
 
-    print(f"\n  resolved: target={ref}  judges={judges}  data_version={spec.DATA_VERSION}")
+    # An HTTP target: actually reach it once and classify (catches wrong port/path/secret
+    # before a battery). Not a scored call — hits only the user's own endpoint.
+    if http_url and not args.no_probe:
+        from .targets import probe_endpoint
+
+        _, headers, _, _ = _http_target_params(args, cfg)
+        print(f"  probing {http_url} (one request; not a scored call) …")
+        res = probe_endpoint(http_url, headers)
+        print(f"    endpoint: {'OK' if res['ok'] else 'FAIL'} — {res['message']}")
+        ready = ready and res["ok"]
+
+    print(f"\n  resolved: target={http_url or ref}  judges={judges}  data_version={spec.DATA_VERSION}")
     return 0 if (data_ok and ready) else 1
 
 
@@ -660,6 +759,97 @@ def _keys_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_config(params: dict) -> str:
+    """Render an ``aipsy-bench.yaml`` from init params. A secret is written as a ``${ENV}``
+    *reference*, never the value — so the committed config never carries a secret."""
+    lines = [
+        "# aipsy-bench project config — committed & team-shareable. CLI flags override these.",
+        "# docs: docs/adapters/eval-endpoint.md",
+        "",
+    ]
+    if params["kind"] == "http":
+        lines.append("target:")
+        lines.append(f"  http: {params['http']}")
+        if params.get("secret_header") and params.get("secret_env"):
+            lines.append("  headers:")
+            lines.append(f"    {params['secret_header']}: ${{{params['secret_env']}}}"
+                         "   # ${ENV} expanded at load — the secret stays out of git")
+        lines.append(f"  conversation: {params.get('conversation', 'stateless')}")
+    else:
+        lines.append(f"target: {params['model_ref']}")
+    lines.append(f"judges: {params.get('judges', 'local')}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _init_prompt_judges() -> str:
+    print("Judge lane — [1] local (offline default, no keys)  [2] gold (frontier, needs keys)  [3] single")
+    return {"1": "local", "2": "gold", "3": "single"}.get(input("> ").strip() or "1", "local")
+
+
+def _init_prompt() -> dict | None:
+    print("aipsy-bench init — scaffold aipsy-bench.yaml\n")
+    print("What are you benchmarking?")
+    print("  [1] your own app via an HTTP /eval endpoint (recommended)")
+    print("  [2] a bare model string, e.g. openai/gpt-5.4-mini")
+    if (input("> ").strip() or "1") == "2":
+        ref = input("model string: ").strip()
+        return {"kind": "model", "model_ref": ref, "judges": _init_prompt_judges()} if ref else None
+    url = input("endpoint URL (e.g. http://localhost:3000/eval): ").strip()
+    if not url:
+        return None
+    secret_header = secret_env = None
+    if input("Is it gated by a secret header? [y/N]: ").strip().lower() == "y":
+        secret_header = input("  header name [x-eval-secret]: ").strip() or "x-eval-secret"
+        secret_env = input("  env var holding the secret [EVAL_SECRET]: ").strip() or "EVAL_SECRET"
+    return {"kind": "http", "http": url, "secret_header": secret_header, "secret_env": secret_env,
+            "conversation": "stateless", "judges": _init_prompt_judges()}
+
+
+def _init(args: argparse.Namespace) -> int:
+    """Scaffold ``aipsy-bench.yaml`` — interactively, or fully from flags (scriptable)."""
+    out = Path(args.out or CONFIG_NAME)
+    if out.exists() and not args.force:
+        print(f"error: {out} already exists — pass --force to overwrite", file=sys.stderr)
+        return 2
+    if bool(args.secret_header) != bool(args.secret_env):
+        print("error: provide both --secret-header and --secret-env (or neither)", file=sys.stderr)
+        return 2
+
+    if args.http_target or args.model:  # flag-driven (scriptable / non-interactive)
+        if args.http_target:
+            params = {"kind": "http", "http": args.http_target,
+                      "secret_header": args.secret_header, "secret_env": args.secret_env,
+                      "conversation": args.conversation or "stateless", "judges": args.judges or "local"}
+        else:
+            params = {"kind": "model", "model_ref": args.model, "judges": args.judges or "local"}
+    elif sys.stdin.isatty():
+        params = _init_prompt()
+        if params is None:
+            print("aborted — nothing written", file=sys.stderr)
+            return 1
+    else:
+        print("error: --http-target <url> or --model <ref> required (no interactive terminal)", file=sys.stderr)
+        return 2
+
+    out.write_text(_render_config(params))
+    print(f"wrote {out}")
+    print(f"  target: {params.get('http') or params.get('model_ref')}   judges: {params.get('judges', 'local')}")
+
+    print("\nnext steps:")
+    step = 1
+    if params.get("secret_env"):
+        print(f"  {step}. put the secret in your .env (it's your endpoint's, not a provider key):")
+        print(f"       echo '{params['secret_env']}=<your-secret>' >> .env")
+        step += 1
+    if params["kind"] == "http":
+        print(f"  {step}. start your dev server, then preflight:  aipsy-bench doctor")
+    elif params.get("judges", "local") == "local":
+        print(f"  {step}. set up the local judge:  aipsy-bench judge pull")
+    print(f"  {step + 1}. run it:  aipsy-bench run --quick")
+    return 0
+
+
 def _scenarios_list(args: argparse.Namespace) -> int:
     for s in bundle.load_scenarios(include_reserved=args.include_reserved):
         tag = "crisis" if s.crisis else "      "
@@ -674,6 +864,16 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="run the benchmark against a target")
     r.add_argument("--model", help="Tier-0 Inspect model string, e.g. openai/gpt-5.4-mini")
     r.add_argument("--target", help="target ref: 'mock', 'mock:failing', or an Inspect model string")
+    r.add_argument("--http-target", default=None, metavar="URL",
+                   help="Tier-1 HTTP /eval endpoint (POST {messages:[...]} -> {reply}) — the "
+                        "zero-Python path for benchmarking your own app; see docs/adapters/")
+    r.add_argument("--header", action="append", metavar="NAME:VALUE",
+                   help="header for --http-target (repeatable), e.g. x-eval-secret:$EVAL_SECRET")
+    r.add_argument("--ref", default=None,
+                   help="label for an --http-target in the report/card (default: the URL)")
+    r.add_argument("--conversation", choices=["stateless", "session"], default=None,
+                   help="--http-target history mode: stateless (default; the bench replays the full "
+                        "transcript) or session (the target owns history; only the new turn is sent)")
     r.add_argument("--judges", choices=["local", "single", "gold"], default=None,
                    help="local = offline FT judge via Ollama (default, no keys); "
                         "single = primary frontier judge; gold = 3-judge frontier ensemble")
@@ -712,6 +912,9 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="preflight: data SHA, judge readiness, resolved config (no scored calls, §16)")
     d.add_argument("--model")
     d.add_argument("--target")
+    d.add_argument("--http-target", default=None, metavar="URL", help="check readiness for an HTTP /eval target")
+    d.add_argument("--no-probe", action="store_true",
+                   help="skip the --http-target connectivity probe (which sends one request to your endpoint)")
     d.add_argument("--judges", choices=["local", "single", "gold"], default=None)
     d.add_argument("--config", default=None)
     d.set_defaults(func=_doctor)
@@ -764,6 +967,19 @@ def build_parser() -> argparse.ArgumentParser:
     kstatus.set_defaults(func=_keys_status)
     kpath = ksub.add_parser("path", help="print the .env path that will be used")
     kpath.set_defaults(func=_keys_path)
+
+    ini = sub.add_parser("init", help="scaffold aipsy-bench.yaml for your target (interactive, or via flags)")
+    ini.add_argument("--http-target", default=None, metavar="URL", help="HTTP /eval endpoint to benchmark")
+    ini.add_argument("--model", default=None, help="a bare Inspect model string instead of an HTTP target")
+    ini.add_argument("--secret-header", default=None, metavar="NAME",
+                     help="secret header name for a gated endpoint (with --secret-env)")
+    ini.add_argument("--secret-env", default=None, metavar="ENVVAR",
+                     help="env var the secret header reads — written to the config as ${ENVVAR}, never the value")
+    ini.add_argument("--conversation", choices=["stateless", "session"], default=None)
+    ini.add_argument("--judges", choices=["local", "single", "gold"], default=None, help="default: local")
+    ini.add_argument("--out", default=None, help=f"config path (default: ./{CONFIG_NAME})")
+    ini.add_argument("--force", action="store_true", help="overwrite an existing config")
+    ini.set_defaults(func=_init)
 
     sc = sub.add_parser("scenarios", help="browse the public benchmark content")
     scsub = sc.add_subparsers(dest="scmd", required=True)

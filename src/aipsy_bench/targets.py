@@ -181,3 +181,77 @@ def http_target(
     rt.adapter = "http"
     rt.meta = {"url": url}
     return rt
+
+
+# --------------------------------------------------------------------------
+# Connectivity probe (for `doctor` — one request, classified; not a scored call)
+# --------------------------------------------------------------------------
+PROBE_TIMEOUT = 15
+# (url, headers, payload, timeout) -> (status_code, body_text). Non-2xx returns its code
+# (does NOT raise) so the probe can classify 401/404/etc. Overridable for offline tests.
+Poster = Callable[[str, dict[str, str], dict[str, Any], float], tuple[int, str]]
+
+
+def _raw_post(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float) -> tuple[int, str]:
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=data, method="POST",
+        headers={"Content-Type": "application/json", **headers},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — user-supplied endpoint
+            return resp.status, resp.read().decode(errors="replace")
+    except urllib.error.HTTPError as e:  # 4xx/5xx: capture the status instead of raising
+        try:
+            return e.code, (e.read().decode(errors="replace") if e.fp else "")
+        except Exception:  # noqa: BLE001
+            return e.code, ""
+
+
+def probe_endpoint(
+    url: str, headers: dict[str, str] | None = None, *,
+    timeout: float = PROBE_TIMEOUT, poster: Poster | None = None,
+) -> dict[str, Any]:
+    """Send one probe request to a Tier-1 HTTP target and classify the outcome.
+
+    Catches the common misconfigs *before* a battery — wrong host/port (unreachable),
+    wrong path (404), bad/missing secret (401/403), wrong response shape. It hits only the
+    user's own endpoint (never a judge/provider), so it is not a scored call. Returns
+    ``{ok, kind, message}``.
+    """
+    headers = headers or {}
+    send = poster or _raw_post
+    body = {"messages": [{"role": "user", "content": "aipsy-bench connectivity probe"}]}
+    try:
+        status, text = send(url, headers, body, timeout)
+    except TimeoutError:
+        return {"ok": False, "kind": "timeout",
+                "message": f"connected but no response within {timeout:g}s — the server is up but slow "
+                           "(or the handler hung); a real run allows a longer --timeout"}
+    except OSError as e:  # URLError subclasses OSError: connection refused / DNS / TLS / …
+        return {"ok": False, "kind": "unreachable",
+                "message": f"not reachable ({type(e).__name__}) — is the server running at {url}?"}
+
+    if status == 404:
+        return {"ok": False, "kind": "not_found",
+                "message": "reached the server but there is no handler at this path (404) — check the route"}
+    if status in (401, 403):
+        return {"ok": False, "kind": "unauthorized",
+                "message": f"reached the endpoint but auth was rejected ({status}) — check the header / secret"}
+    if 200 <= status < 300:
+        try:
+            parsed = json.loads(text) if isinstance(text, str) else text
+            reply = _parse_reply(parsed)
+        except Exception:  # noqa: BLE001 — any parse failure is a contract mismatch
+            return {"ok": False, "kind": "bad_shape",
+                    "message": f"reachable ({status}) but the response is not a {{reply}} / OpenAI shape — "
+                               "check the {messages} -> {reply} contract"}
+        preview = " ".join(reply.split())
+        preview = (preview[:57] + "…") if len(preview) > 58 else preview
+        return {"ok": True, "kind": "ok", "message": f'reachable — endpoint replied ({status}): "{preview}"'}
+    return {"ok": False, "kind": "http_error",
+            "message": f"reached the endpoint (HTTP {status}) — it did not accept the probe payload; "
+                       "verify it takes {messages:[{role,content}]} -> {reply}"}
