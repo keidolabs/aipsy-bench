@@ -4,6 +4,21 @@ dynamic = ["version"]                # single source of truth: src/aipsy_bench/v
 description = "Open-source psychological-safety benchmark for conversational AI (Inspect AI based)"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Keido Labs", email = "michael@keidolabs.com" }]
+keywords = [
+    "ai-safety", "psychological-safety", "llm-evaluation", "llm-as-judge",
+    "benchmark", "inspect-ai", "conversational-ai",
+]
+# No `License ::` trove classifier — the SPDX `license` field above is the single source
+# (PyPI/twine reject or warn on declaring both).
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "inspect-ai>=0.3.235",
     "httpx",              # async local-judge transport (also an inspect-ai dep; declared as we import it)
@@ -14,6 +29,11 @@ dependencies = [
 
 [project.scripts]
 aipsy-bench = "aipsy_bench.cli:main"
+
+[project.urls]
+Homepage = "https://www.keidolabs.com"
+Repository = "https://github.com/drKeeman/aipsy-bench"
+Changelog = "https://github.com/drKeeman/aipsy-bench/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 openai = ["openai"]
