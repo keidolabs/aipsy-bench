@@ -17,7 +17,14 @@ from inspect_ai import eval as inspect_eval
 from . import __version__, bundle, report, spec
 from .config import CONFIG_NAME, HttpTargetSpec, load_config
 from .gate import gate_result
-from .targets import ResolvedTarget, http_target, is_mock_ref, resolve_target, validate_model_ref
+from .targets import (
+    ResolvedTarget,
+    http_target,
+    is_mock_ref,
+    key_looks_malformed,
+    resolve_target,
+    validate_model_ref,
+)
 from .task import aipsy_bench, quick_scenario_ids
 from .validation import load_validation
 
@@ -293,9 +300,14 @@ def _run(args: argparse.Namespace) -> int:
         # interrupt leaves COMPLETE scenarios — no throughput loss, since the judge is the
         # serialized bottleneck either way (a local target shares the same GPU).
         eval_kwargs = {"max_samples": 1} if judges == "local" else {}
+        # Tier-0 model targets: pass the STRING so Inspect builds the target INSIDE the eval
+        # context (after it loads .env), identically to the judges — a target built at CLI time
+        # (pre-.env) can capture a different key than the judges ("judge works, target doesn't",
+        # §6 key-parity). mock/http/callable carry custom outputs, so pass their built model.
+        eval_model = resolved.ref if resolved.adapter == "model" else resolved.model
         # fail_on_error=False → one bad scenario never aborts a long battery; it is
         # logged (run failure / incomplete) and the rest still score.
-        log = inspect_eval(task, model=resolved.model, display=args.display,
+        log = inspect_eval(task, model=eval_model, display=args.display,
                            log_dir=str(out / "logs"), fail_on_error=False, **eval_kwargs)[0]
 
     incomplete = log.status != "success"
@@ -586,12 +598,17 @@ def _print_provider_doctor(providers: list[str], ref: str, judges: str) -> bool:
         if p not in spec.API_ENV_VARS:  # other non-keyed provider — let Inspect handle it
             continue
         env = spec.API_ENV_VARS[p]
-        key_ok = bool(os.environ.get(env))
+        val = os.environ.get(env, "")
+        key_ok = bool(val)
+        malformed = key_looks_malformed(val)  # e.g. OPENAI_API_KEY=/…/.env — a path, not a key
         sdk_ok = _sdk_installed(p)
-        ready = ready and key_ok and sdk_ok
+        ready = ready and key_ok and sdk_ok and not malformed
         sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[p]})"
         pin = spec.JUDGE_MODEL_PINS.get(p, "target")
-        print(f"    {p} ({pin}): {env} {'present' if key_ok else 'MISSING'}; SDK {sdk_str}")
+        key_str = ("present" if key_ok else "MISSING")
+        if malformed:
+            key_str = "present but MALFORMED (looks like a path/whitespace, not a key — check its VALUE)"
+        print(f"    {p} ({pin}): {env} {key_str}; SDK {sdk_str}")
     return ready
 
 

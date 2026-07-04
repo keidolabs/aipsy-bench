@@ -59,13 +59,21 @@ def test_resolve_unknown_provider_clean_error():
     assert "not a recognized" in str(ei.value) and "foo" in str(ei.value)
 
 
-def test_resolve_missing_key_clean_error(monkeypatch):
-    # valid provider, no key → Inspect raises PrerequisiteError (NOT a ValueError) — the bug.
-    # It must become a clean, actionable TargetResolutionError, not crash.
+def test_resolve_missing_key_defers_to_eval_context(monkeypatch):
+    # valid provider, no key at CLI time → Inspect raises PrerequisiteError. That must NOT be a
+    # hard reject: the key may live in .env, which Inspect loads INSIDE the eval. Defer with
+    # model=None so the run builds the target from the ref there (same context as the judges).
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(TargetResolutionError) as ei:
-        resolve_target("openai/gpt-9000")
-    assert "OPENAI_API_KEY" in str(ei.value) or "keys set" in str(ei.value)
+    rt = resolve_target("openai/gpt-9000")
+    assert rt.adapter == "model" and rt.ref == "openai/gpt-9000" and rt.model is None
+
+
+def test_doctor_flags_malformed_key(monkeypatch, capsys):
+    # the exact QA failure: OPENAI_API_KEY set to a PATH, not a key → caught at preflight
+    monkeypatch.setenv("OPENAI_API_KEY", "/Users/me/proj/.env")
+    rc = main(["doctor", "--model", "openai/gpt-5.4-mini", "--judges", "single"])
+    assert "MALFORMED" in capsys.readouterr().out
+    assert rc == 1
 
 
 def test_resolve_mock_still_works():

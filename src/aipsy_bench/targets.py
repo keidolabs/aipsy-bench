@@ -98,6 +98,20 @@ def validate_model_ref(ref: str) -> dict:
             "message": f"provider '{provider}' recognized (the model name is checked at run time)"}
 
 
+def _is_missing_key_error(e: Exception) -> bool:
+    """A provider recognized-but-not-ready-here error (missing/unresolved API key) — as
+    opposed to an unknown provider or a structural fault. Inspect raises PrerequisiteError."""
+    return type(e).__name__ == "PrerequisiteError" or "API_KEY" in str(e).upper()
+
+
+def key_looks_malformed(value: str) -> bool:
+    """A present API-key VALUE that clearly isn't a key — a filesystem path (the classic
+    ``OPENAI_API_KEY=/…/.env`` mistake), or one carrying whitespace. Used by ``doctor`` to
+    catch a bad key at preflight instead of as an opaque per-turn auth failure."""
+    v = value or ""
+    return bool(v) and ("/" in v or v != v.strip() or v.endswith(".env") or " " in v)
+
+
 def _explain_resolution_error(ref: str, e: Exception) -> str:
     """Turn an Inspect ``get_model`` exception into one clean, actionable line (Inspect's
     own messages are decent but leak rich-markup / internals)."""
@@ -128,7 +142,9 @@ Transport = Callable[[str, dict[str, str], dict[str, Any]], Any]
 
 @dataclass
 class ResolvedTarget:
-    model: Model
+    # ``None`` only for a Tier-0 model target whose key isn't resolvable at CLI time — the run
+    # then constructs it from ``ref`` inside the eval context (post-.env), like the judges.
+    model: Model | None
     ref: str
     adapter: str                       # "mock" | "model" | "http" | "callable"
     is_mock: bool
@@ -187,6 +203,13 @@ def resolve_target(ref: str) -> ResolvedTarget:
     try:
         model = get_model(ref)
     except Exception as e:  # noqa: BLE001 — normalize every provider's failure to one clean error
+        if _is_missing_key_error(e):
+            # Provider recognized; the key just isn't resolvable HERE (CLI time). Do NOT
+            # pre-capture or reject: the key may live in .env, which Inspect loads INSIDE the
+            # eval context. Defer — the run builds the target from the string there, so it
+            # resolves the key exactly where/when the judges do (§6 key-parity). model=None
+            # is a marker: the run must pass the ref string to inspect_eval, not this object.
+            return ResolvedTarget(model=None, ref=ref, adapter="model", is_mock=False)
         raise TargetResolutionError(_explain_resolution_error(ref, e)) from e
     return ResolvedTarget(model=model, ref=ref, adapter="model", is_mock=False)
 
