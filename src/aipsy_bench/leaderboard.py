@@ -208,7 +208,7 @@ def _post_text(result_json: dict, row: BoardRow) -> str:
     panel = result_json.get("judge_panel", "gold")
     panel_label = {
         "gold": "gold panel",
-        "local": "local FT judge (gemma4-judge-ft-v3, offline)",
+        "local": f"local FT judge ({spec.LOCAL_JUDGE_VERSION}, offline)",
     }.get(panel, f"{panel} panel")
     local_note = (
         "> LOCAL JUDGE — scored by the offline fine-tuned judge: a different instrument "

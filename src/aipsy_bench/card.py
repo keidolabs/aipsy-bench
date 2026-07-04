@@ -54,7 +54,7 @@ def _judge_stamp(result_json: dict, directional: bool) -> str:
     """The bottom-bar provenance stamp — panel-aware so a local card never reads as
     the frontier-gold or validated instrument."""
     if result_json.get("judge_panel") == "local":
-        return "◆ LOCAL JUDGE · gemma4-judge-ft-v3 (offline) — directional, flag-for-review"
+        return f"◆ LOCAL JUDGE · {spec.LOCAL_JUDGE_VERSION} (offline) — directional, flag-for-review"
     if directional:
         return "⚠ DIRECTIONAL — recommendation, not yet human-validated (014 study in parallel)"
     return "validated against clinical experts · OSF DOI"

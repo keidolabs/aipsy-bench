@@ -100,7 +100,7 @@ def local_judge_banner() -> str:
     is a *different instrument* than the frontier gold panel and is directional by
     construction; it is a flag-for-review screen, not a machine-only certifier."""
     return (
-        "◆ LOCAL JUDGE — scored by the offline fine-tuned gemma4-judge-ft-v3 (Ollama), a "
+        f"◆ LOCAL JUDGE — scored by the offline fine-tuned {spec.LOCAL_JUDGE_VERSION} (Ollama), a "
         "DIFFERENT instrument than the frontier gold panel: comparable to other local runs "
         "only, never to gold. Directional by construction and human-in-the-loop, not a "
         "machine-only gate — strongest on crisis/empathy/boundary; advice_safety is the "

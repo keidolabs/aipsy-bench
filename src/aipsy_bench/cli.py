@@ -810,7 +810,7 @@ def _judge_status(args: argparse.Namespace) -> int:
 
 
 def _judge_pull(args: argparse.Namespace) -> int:
-    """Download the FT GGUF from HF (via HF_TOKEN) + register the Ollama tag."""
+    """Download the FT GGUF from the public HF repo (no token needed) + register the Ollama tag."""
     from . import local_judge
 
     res = local_judge.ensure_model(force=args.force)
@@ -1212,7 +1212,7 @@ def build_parser() -> argparse.ArgumentParser:
     jsub = j.add_subparsers(dest="jcmd", required=True)
     jstatus = jsub.add_parser("status", help="check Ollama + the FT model are ready (no scored calls)")
     jstatus.set_defaults(func=_judge_status)
-    jpull = jsub.add_parser("pull", help="download the FT GGUF from HF (uses HF_TOKEN) + register the Ollama tag")
+    jpull = jsub.add_parser("pull", help="download the FT GGUF from the public HF repo (no token) + register the Ollama tag")
     jpull.add_argument("--force", action="store_true", help="re-create the tag even if already present")
     jpull.set_defaults(func=_judge_pull)
     jwarm = jsub.add_parser("warm", help="pre-load the model into memory (absorbs the one-time cold load)")

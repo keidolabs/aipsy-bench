@@ -1,6 +1,7 @@
 """Local judge — the offline, self-contained DEFAULT panel (exp 016-local-judge).
 
-The fine-tuned ``gemma4-judge-ft-v3`` model served by a local Ollama server. We call
+The fine-tuned ``aipsy-judge-1.0`` model (public HF repo ``keidolabs/aipsy-judge-1.0``;
+internal FT lineage ``gemma4-judge-ft-v3`` / 015→016) served by a local Ollama server. We call
 Ollama's NATIVE ``/api/chat`` over stdlib ``urllib`` (no extra runtime deps for
 scoring), reproducing the 016/015 served inference contract byte-for-byte
 (``open_judges.py`` ``OllamaProvider.complete``): system + user roles (the gemma4
@@ -311,11 +312,11 @@ def _manual_setup() -> str:
     return (
         "Manual setup:\n"
         "  1. Install + start Ollama (https://ollama.com):   ollama serve\n"
-        f"  2. Download the GGUF + Modelfile (needs HF_TOKEN for the private repo):\n"
+        f"  2. Download the GGUF + Modelfile (public repo — no token needed):\n"
         f"       hf download {spec.LOCAL_JUDGE_HF_REPO} {spec.LOCAL_JUDGE_GGUF} "
-        f"{spec.LOCAL_JUDGE_MODELFILE} --local-dir ./gemma4-judge-ft\n"
+        f"{spec.LOCAL_JUDGE_MODELFILE} --local-dir ./aipsy-judge\n"
         f"  3. Register the tag (the published GGUF is already {spec.LOCAL_JUDGE_QUANT}):\n"
-        f"       cd ./gemma4-judge-ft/gguf && ollama create {spec.LOCAL_JUDGE_TAG} -f Modelfile\n"
+        f"       cd ./aipsy-judge/gguf && ollama create {spec.LOCAL_JUDGE_TAG} -f Modelfile\n"
         "  4. Verify:   aipsy-bench judge status"
     )
 

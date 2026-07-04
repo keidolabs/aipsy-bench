@@ -163,11 +163,14 @@ JUDGE_CHOICES = ("local", "single", *(f"single:{p}" for p in PROVIDERS), "gold")
 #
 # Pins are frozen (a judge change = a different score meaning):
 LOCAL_JUDGE_PROVIDER = "local"                        # pseudo-provider key in the panel
-LOCAL_JUDGE_TAG = "gemma4-judge-ft"                   # the Ollama tag we create/serve (== 015)
-LOCAL_JUDGE_VERSION = "gemma4-judge-ft-v3"            # frozen FT version (judge_versions/provenance)
-LOCAL_JUDGE_HF_REPO = "keidolabs/gemma4-judge-ft-v3"  # weights backup (private for now)
-LOCAL_JUDGE_GGUF = "gguf/gemma4-judge-ft-v3-q8.gguf"  # the servable blob in the HF repo
+LOCAL_JUDGE_TAG = "aipsy-judge"                       # the local Ollama tag we create/serve
+LOCAL_JUDGE_VERSION = "aipsy-judge-1.0"               # frozen public version (judge_versions/provenance)
+LOCAL_JUDGE_HF_REPO = "keidolabs/aipsy-judge-1.0"     # public, ungated — token-free `judge pull`
+LOCAL_JUDGE_GGUF = "gguf/aipsy-judge-1.0-q8.gguf"     # the servable Q8_0 blob in the HF repo
 LOCAL_JUDGE_MODELFILE = "gguf/Modelfile"             # the Ollama serving recipe in the HF repo
+# Public naming canon (2026-07-04, .specs/HF-MODEL-RELEASE.md): functional `aipsy-judge`, version
+# in the repo name (one frozen repo per version); version = comparability (MAJOR breaks the local
+# lane, MINOR preserves it). Internal training lineage (ft-v3 / 015→016) is card provenance only.
 # Serving quant is REQUIRED to be Q8_0: the FT's sharp low-loss weights truncate
 # ~16% of outputs under PTQ-Q4_K_M (early-EOS mid-JSON); Q8_0 re-scores 99.7% clean
 # (STEP3 §Serving / memory ``project_ft_judge_needs_q8_serving``).
