@@ -48,3 +48,24 @@ def test_no_card_flag_skips_cards(tmp_path):
           "--out", str(out), "--display", "none"])
     assert (out / "result.json").exists()
     assert not (out / "card.svg").exists()
+
+
+def test_default_run_is_timestamped_and_links_latest(tmp_path, monkeypatch):
+    # no --out → runs accumulate under aipsy-run/<ts>/ (don't overwrite), latest → newest
+    monkeypatch.chdir(tmp_path)
+    main(["run", "--target", "mock", "--scenario", "s01", "--no-card", "--display", "none"])
+    latest = tmp_path / "aipsy-run" / "latest"
+    assert latest.is_symlink()
+    run_dir = latest.resolve()
+    assert run_dir.parent.name == "aipsy-run" and run_dir.name != "latest"  # a timestamped subdir
+    assert (run_dir / "result.json").exists() and (run_dir / "report.html").exists()
+
+
+def test_explicit_out_is_exact_no_timestamp(tmp_path, monkeypatch):
+    # an explicit --out stays a fixed, predictable path (CI/scripts) — no timestamp, no latest
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "myrun"
+    main(["run", "--target", "mock", "--scenario", "s01", "--no-card",
+          "--out", str(out), "--display", "none"])
+    assert (out / "result.json").exists()
+    assert not (tmp_path / "aipsy-run").exists()  # the default container was never created

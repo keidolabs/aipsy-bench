@@ -10,6 +10,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from inspect_ai import eval as inspect_eval
@@ -233,7 +234,8 @@ def _run(args: argparse.Namespace) -> int:
     quick = args.quick or cfg.quick
     scenario = args.scenario or cfg.scenario
     scenario_ids = [s.strip() for s in scenario.split(",")] if scenario else None
-    out = Path(args.out or cfg.out or "aipsy-run")
+    explicit_out = args.out or cfg.out
+    out = Path(explicit_out) if explicit_out else _default_run_dir()
     max_cost = args.max_cost if args.max_cost is not None else cfg.max_cost
 
     try:
@@ -337,9 +339,20 @@ def _run(args: argparse.Namespace) -> int:
         from . import leaderboard
         print()
         print(leaderboard.render_against_board(result, domain=args.domain))
+    # Default runs accumulate under aipsy-run/<ts>/ — point `latest` at this one and, if a
+    # prior run exists, offer a ready-to-paste compare (old vs improved).
+    prev = None
+    if not explicit_out:
+        _link_latest(out)
+        prev = _previous_run_dir(out)
+
     report_uri = (out / "report.html").resolve().as_uri()  # file:// → terminals linkify it (pytest-style)
     print(f"\nartifacts written to: {out}/result.json · {out}/report.txt · {out}/report.html")
     print(f"open the report:      {report_uri}")
+    if not explicit_out:
+        print(f"latest run:           {out.parent / LATEST_LINK} → {out.name}")
+        if prev is not None:
+            print(f"compare vs last run:  aipsy-bench compare {prev} {out}")
 
     if incomplete:
         print("\nrun INCOMPLETE — not gated, not carded.", file=sys.stderr)
@@ -449,6 +462,41 @@ def _compare(args: argparse.Namespace) -> int:
         print(f"head-to-head card: {out}/head_to_head.svg")
 
     return 0 if reg["passed"] else 1
+
+
+# Default run output: a FRESH timestamped subdir per run so runs accumulate (compare
+# old-vs-improved) instead of overwriting — idempotent by default, no flag needed. An
+# explicit --out (or cfg.out) overrides this with an exact path (predictable for CI/scripts).
+RUNS_DIR = "aipsy-run"     # the gitignored container; runs land in aipsy-run/<timestamp>/
+LATEST_LINK = "latest"     # aipsy-run/latest → the newest run (what explain/provenance default to)
+
+
+def _default_run_dir() -> Path:
+    return Path(RUNS_DIR) / datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _link_latest(run_dir: Path) -> None:
+    """Point <base>/latest at the newest run (best-effort; skipped where symlinks aren't
+    available). Relative target so it survives moving/renaming the container."""
+    latest = run_dir.parent / LATEST_LINK
+    try:
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(run_dir.name)
+    except OSError:
+        pass
+
+
+def _previous_run_dir(current: Path) -> Path | None:
+    """The most recent PRIOR run under the same container — for a ready-to-paste compare hint."""
+    try:
+        sibs = sorted(
+            p for p in current.parent.iterdir()
+            if p.is_dir() and p.name not in (LATEST_LINK, current.name)
+        )
+    except OSError:
+        return None
+    return sibs[-1] if sibs else None
 
 
 def _resolve_eval(path_str: str) -> str | None:
@@ -1058,7 +1106,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--quick", action="store_true", help="smoke subset: one scenario/domain + s06,s07")
     r.add_argument("--scenario", help="comma-separated scenario ids, e.g. s06,s07")
     r.add_argument("--baseline-prompt", action="store_true", help="inject the 014 baseline system prompt (§6 opt-in)")
-    r.add_argument("--out", default=None, help="output directory for result.json + report.txt")
+    r.add_argument("--out", default=None,
+                   help="output dir (default: a fresh aipsy-run/<timestamp>/ per run so runs don't "
+                        "overwrite — aipsy-run/latest points at the newest; pass a path for a fixed location)")
     r.add_argument("--no-card", action="store_true", help="skip share-card rendering")
     r.add_argument("--dry-run", action="store_true", help="estimate call counts/cost/time; make NO scored calls (§16)")
     r.add_argument("--max-cost", type=float, default=None, help="abort if the --dry-run cost estimate exceeds this (USD)")
@@ -1099,7 +1149,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pv = sub.add_parser("provenance", help="print tool/data version, judge pins + resolved snapshots, git SHA (§16)")
     pv.add_argument("--log", default=None, help="path to a .eval log (default: newest under --out/logs)")
-    pv.add_argument("--out", default="aipsy-run")
+    pv.add_argument("--out", default="aipsy-run/latest")
     pv.set_defaults(func=_provenance)
 
     c = sub.add_parser("compare", help="diff two .eval logs → deltas + regression gate (§7.1)")
@@ -1115,11 +1165,11 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("scenario", help="scenario id, e.g. s06")
     e.add_argument("turn", type=int, help="turn number, e.g. 5")
     e.add_argument("--log", default=None, help="path to a .eval log (default: newest under --out/logs)")
-    e.add_argument("--out", default="aipsy-run", help="run dir to autodiscover the log from")
+    e.add_argument("--out", default="aipsy-run/latest", help="run dir to autodiscover the log from")
     e.set_defaults(func=_explain)
 
     pc = sub.add_parser("publish-card", help="opt-in: prepare a ready-to-post card bundle locally (no network, §13.6)")
-    pc.add_argument("--run", default="aipsy-run", help="run dir containing result.json")
+    pc.add_argument("--run", default="aipsy-run/latest", help="run dir containing result.json")
     pc.set_defaults(func=_publish_card)
 
     ci = sub.add_parser("cite", help="print BibTeX for the OSF registration + tool/data version")
