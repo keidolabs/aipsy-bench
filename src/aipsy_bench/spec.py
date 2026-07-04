@@ -189,6 +189,10 @@ LOCAL_JUDGE_MAC_RAM_MIN_GB = 48        # unified-memory realistic minimum → re
 LOCAL_JUDGE_MAC_RAM_SLOW_GB = 32       # 32–48 GB: loads but unusably slow → steer to API
 LOCAL_JUDGE_GPU_VRAM_MIN_GB = 16       # discrete GPU: minimum VRAM to serve at speed
 LOCAL_JUDGE_GPU_RAM_MIN_GB = 64        # …with this much system RAM alongside
+# nvidia-smi reports VRAM in MiB; MiB/1024 (→GiB) + driver-reserved memory means a "16 GB"
+# card reads ~15–16 GB. Accept within this tolerance of the tier, else we reject cards that
+# actually meet the spec (the reported-below-advertised gap).
+LOCAL_JUDGE_GPU_VRAM_TOLERANCE_GB = 1
 # Inference contract — replicate the 016/015 served path (open_judges.py
 # OllamaProvider.complete): system+user roles (the gemma4 renderer handles system),
 # num_ctx 8192 (the judge prompt is ~5k tokens; a smaller ctx truncates the rubric),

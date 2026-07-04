@@ -64,8 +64,9 @@ def test_viability_mac_bands(monkeypatch, ram, band, viable):
 
 @pytest.mark.parametrize("vram,ram,band,viable", [
     (24.0, 128.0, "ready", True),
+    (15.9, 128.0, "ready", True),       # a 16 GB card under-reports as ~15.9 → still qualifies
     (16.0, 32.0, "tight", True),        # VRAM ok but system RAM < 64 GB
-    (8.0, 128.0, "insufficient", False),  # GPU present but too small
+    (12.0, 128.0, "insufficient", False),  # genuinely below the 16 GB tier
     (None, 128.0, "no_gpu", False),       # CPU-only → unusable for a 26B judge
 ])
 def test_viability_linux_bands(monkeypatch, vram, ram, band, viable):

@@ -287,13 +287,16 @@ def viability() -> dict:
     # discrete-GPU box (linux/other): VRAM gates; system RAM is secondary
     vram = gpu_vram_gb()
     req = f"{spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB VRAM + {spec.LOCAL_JUDGE_GPU_RAM_MIN_GB} GB RAM"
-    vram_str = f"{vram:.0f} GB" if vram else None
+    vram_str = f"{vram:.1f} GB" if vram else None  # honest precision — a 16 GB card reads ~15.9
+    # Tolerance: nvidia-smi under-reports the advertised tier, so a real 16 GB card ("~15.9")
+    # must still qualify (else the exact-16 GB box gets misdiagnosed and pushed to the API lane).
+    vram_ok = vram is not None and vram >= spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB - spec.LOCAL_JUDGE_GPU_VRAM_TOLERANCE_GB
     if vram is None:
         band, detail, viable = "no_gpu", "no CUDA GPU detected — a 26B judge on CPU is unusably slow", False
-    elif vram < spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB:
-        band, detail, viable = "insufficient", f"GPU has {vram_str} VRAM < {spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB", False
+    elif not vram_ok:
+        band, detail, viable = "insufficient", f"GPU VRAM {vram_str} is below the {spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB needed", False
     elif ram is not None and ram < spec.LOCAL_JUDGE_GPU_RAM_MIN_GB:
-        band, detail, viable = "tight", (f"{vram_str} VRAM (≥ {spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB); "
+        band, detail, viable = "tight", (f"{vram_str} VRAM (meets ~{spec.LOCAL_JUDGE_GPU_VRAM_MIN_GB} GB); "
                                          f"{ram_str} RAM < {spec.LOCAL_JUDGE_GPU_RAM_MIN_GB} GB (tight)"), True
     else:
         band, detail, viable = "ready", f"{vram_str} VRAM + {ram_str} RAM", True

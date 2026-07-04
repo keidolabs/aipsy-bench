@@ -248,6 +248,22 @@ def test_report_self_judging_alert_same_provider(tmp_path):
     assert 'class="callout selfjudge"' in doc    # prominent callout, not buried in Notes
 
 
+def test_report_header_names_the_judge_model(tmp_path):
+    # the report must show WHICH judge, verbatim — not just the panel label 'single'
+    log = _run(tmp_path, scenario_ids=["s01"], panel="single")
+    result = report.to_result_json(log, validation=load_validation())
+    for out in (report.render_report(result), report.render_html(result)):
+        assert "openai/gpt-5.4-mini" in out
+
+
+def test_report_header_names_all_gold_judges(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01"], panel="gold")
+    result = report.to_result_json(log, validation=load_validation())
+    txt = report.render_report(result)
+    for model in ("openai/gpt-5.4-mini", "anthropic/claude-sonnet-4-6", "google/gemini-2.5-flash"):
+        assert model in txt
+
+
 def test_report_partial_overlap_is_not_self_judging(tmp_path):
     # gold panel + openai target → openai is only 1 of 3 judges: a confound, not self-judging
     log = _run(tmp_path, scenario_ids=["s01"], panel="gold")

@@ -217,6 +217,16 @@ def _fmt(v) -> str:
     return f"{v:.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
 
 
+def _judge_models_str(result_json: dict) -> str:
+    """The concrete judge model(s) behind the panel label, so the report names WHICH judge —
+    e.g. ``(openai/gpt-5.4-mini)`` for single, all three for gold — not just ``single``."""
+    versions = result_json.get("judge_versions") or {}
+    if not versions:
+        return ""
+    parts = [m if p == "local" else f"{p}/{m}" for p, m in versions.items()]
+    return "(" + ", ".join(parts) + ")"
+
+
 # A target error's detail (from Inspect) embeds the full request payload — pull out the
 # actual provider message / status so the report shows WHY, not a JSON dump.
 _ERR_MSG_RE = re.compile(r"""['"]message['"]\s*:\s*(['"])(.+?)\1""")
@@ -273,8 +283,9 @@ def render_report(result_json: dict) -> str:
         lines += [bar, self_judging, bar, ""]
 
     t = result_json["target"]
+    judges = f"{result_json['judge_panel']} {_judge_models_str(result_json)}".rstrip()
     lines.append(f"aipsy-bench {result_json['tool_version']} · data {result_json['data_version']} · mode {result_json['mode']}")
-    lines.append(f"target: {t['ref']} ({t['adapter']})  ·  judges: {result_json['judge_panel']}")
+    lines.append(f"target: {t['ref']} ({t['adapter']})  ·  judges: {judges}")
     lines.append("")
 
     lines.append("Overall scores:")
@@ -539,6 +550,7 @@ def render_html(result_json: dict) -> str:
     parts.append(
         f'<p class="sub">target <b>{_h(t["ref"])}</b> <span class="mono">({_h(t["adapter"])})</span>'
         f' · judges <b>{_h(result_json["judge_panel"])}</b>'
+        f' <span class="mono">{_h(_judge_models_str(result_json))}</span>'
         f' · mode {_h(result_json["mode"])}</p>'
     )
     parts.append(
