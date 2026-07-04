@@ -568,51 +568,78 @@ def _doctor(args: argparse.Namespace) -> int:
         print(f"  data/v1 integrity: FAIL — {e}")
         data_ok = False
 
-    # Validate a Tier-0 model string offline so a bad ref is caught HERE, not as a run-setup
-    # crash. (mock / http targets don't have a model string to check.)
-    model_ref_ok = True
-    if ref and not is_mock_ref(ref) and not http_url:
-        chk = validate_model_ref(ref)
-        mark = {"ok": "", "warn": "⚠ ", "error": "✗ "}[chk["level"]]
-        print(f"  target model: {mark}{ref} — {chk['message']}")
-        model_ref_ok = chk["level"] != "error"
+    # Two clear roles, checked independently across every combination: the TARGET (what the
+    # thing-under-test needs) and the JUDGE (what the scorer needs). One key per provider is
+    # shared between the roles when they coincide — reported under both so readiness is explicit.
+    is_mock = (not http_url) and is_mock_ref(ref)
+    target_ok = _doctor_target_section(args, cfg, ref, http_url, is_mock)
+    judge_ok = _doctor_judge_section(judges, is_mock)
 
-    ready = True
-    if judges == "local":
-        # The headline default: report local-judge readiness regardless of target.
-        ready = _print_local_judge_doctor()
-        if http_url:
-            print(f"    note: target is your HTTP endpoint ({http_url}) — no provider key needed for "
-                  "the target; the block above is your local-judge readiness. Start the endpoint "
-                  "before `run`.")
-        elif is_mock_ref(ref):
-            print("    note: --target mock uses offline mock judges (no Ollama needed); the "
-                  "block above is your readiness for a REAL target.")
-        else:  # a real target still needs ITS provider key/SDK
-            ready = _print_provider_doctor([ref.split("/", 1)[0]], ref, judges) and ready
-    elif http_url:  # frontier judges over an HTTP target: only the judge panel needs keys
-        print(f"  target: HTTP endpoint {http_url} — no provider key needed; ensure it is reachable.")
-        ready = _print_provider_doctor(sorted(_judge_panel_providers(judges)), "__http__", judges)
-    elif is_mock_ref(ref):
-        print("  judges: mock target → offline mock judges, no keys or SDKs needed")
-    else:
-        ready = _print_provider_doctor(_required_providers(ref, judges), ref, judges)
-
-    # An HTTP target: actually reach it once and classify (catches wrong port/path/secret
-    # before a battery). Not a scored call — hits only the user's own endpoint.
-    if http_url and not args.no_probe:
-        from .targets import probe_endpoint
-
-        _, headers, _, _ = _http_target_params(args, cfg)
-        print(f"  probing {http_url} (one request; not a scored call) …")
-        res = probe_endpoint(http_url, headers)
-        print(f"    endpoint: {'OK' if res['ok'] else 'FAIL'} — {res['message']}")
-        ready = ready and res["ok"]
+    # Same-provider note: a frontier target + an API judge on the SAME provider read the same
+    # key (same account) — tie it to the report's self-judging bias alert.
+    if ref and not http_url and not is_mock:
+        tprov = ref.split("/", 1)[0]
+        if tprov in _judge_panel_providers(judges) and tprov in spec.API_ENV_VARS:
+            print(f"\n  note: target & judge both use {spec.API_ENV_VARS[tprov]} (same account); a "
+                  "different judge provider reduces self-preference bias (see the report's SELF-JUDGING note).")
 
     _print_path_recommendation()
 
     print(f"\n  resolved: target={http_url or ref}  judges={judges}  data_version={spec.DATA_VERSION}")
-    return 0 if (data_ok and ready and model_ref_ok) else 1
+    return 0 if (data_ok and target_ok and judge_ok) else 1
+
+
+def _doctor_target_section(args: argparse.Namespace, cfg, ref, http_url, is_mock) -> bool:
+    """TARGET readiness: exactly what the thing-under-test needs — an HTTP endpoint (its own
+    secret + a reachability probe), a mock (nothing), an ollama model (client lib, no key), or
+    a frontier model (that provider's key + SDK)."""
+    print("  Target:")
+    if http_url:
+        print(f"    HTTP endpoint {http_url} — no provider key needed "
+              "(auth is your endpoint's own header/secret; start it before `run`)")
+        if args.no_probe:
+            return True
+        from .targets import probe_endpoint
+
+        _, headers, _, _ = _http_target_params(args, cfg)
+        print(f"    probing {http_url} (one request; not a scored call) …")
+        res = probe_endpoint(http_url, headers)
+        print(f"    endpoint: {'OK' if res['ok'] else 'FAIL'} — {res['message']}")
+        return res["ok"]
+    if is_mock:
+        print(f"    {ref} — offline mock target (no keys or SDK)")
+        return True
+    # a real Tier-0 model string — validate structure offline, then its provider readiness
+    chk = validate_model_ref(ref)
+    mark = {"ok": "", "warn": "⚠ ", "error": "✗ "}[chk["level"]]
+    print(f"    target model: {mark}{ref} — {chk['message']}")
+    if chk["level"] == "error":
+        return False
+    provider = ref.split("/", 1)[0]
+    if provider == "ollama":  # Inspect drives ollama via its openai client — no key
+        sdk_ok = _sdk_installed("openai")
+        print(f"    ollama target: openai client lib "
+              f"{'installed' if sdk_ok else 'MISSING (uv sync --extra local)'} — no key needed; "
+              "ensure `ollama serve` is running")
+        return sdk_ok
+    return _print_role_key(provider)
+
+
+def _doctor_judge_section(judges: str, is_mock: bool) -> bool:
+    """JUDGE readiness: mock judges (offline), the local FT judge (Ollama + model + hardware),
+    or a frontier panel (each provider's key + SDK)."""
+    if is_mock:
+        print(f"  Judge: {judges} → offline mock judges (mock target — no keys or SDKs)")
+        return True
+    if spec.panel_base(judges) == "local":
+        print("  Judge: local (offline FT judge via Ollama — needs no API key)")
+        return _print_local_judge_doctor()
+    models = ", ".join(f"{p}/{spec.JUDGE_MODEL_PINS[p]}" for p in sorted(_judge_panel_providers(judges)))
+    print(f"  Judge: {judges} ({models})")
+    ok = True
+    for p in sorted(_judge_panel_providers(judges)):
+        ok = _print_role_key(p) and ok
+    return ok
 
 
 def _print_local_judge_doctor() -> bool:
@@ -632,32 +659,23 @@ def _print_local_judge_doctor() -> bool:
     return bool(st["running"] and st["model_present"])
 
 
-def _print_provider_doctor(providers: list[str], ref: str, judges: str) -> bool:
-    label = "target" if providers == [ref.split("/", 1)[0]] and judges == "local" else f"{judges} panel + target"
-    print(f"  providers ({label}) — key + SDK:")
-    ready = True
-    for p in providers:
-        if p == "ollama":  # ollama target: Inspect's openai client lib, no API key
-            sdk_ok = _sdk_installed("openai")
-            ready = ready and sdk_ok
-            print(f"    ollama target: openai client lib "
-                  f"{'installed' if sdk_ok else 'MISSING (uv sync --extra local)'}; no key needed")
-            continue
-        if p not in spec.API_ENV_VARS:  # other non-keyed provider — let Inspect handle it
-            continue
-        env = spec.API_ENV_VARS[p]
-        val = os.environ.get(env, "")
-        key_ok = bool(val)
-        malformed = key_looks_malformed(val)  # e.g. OPENAI_API_KEY=/…/.env — a path, not a key
-        sdk_ok = _sdk_installed(p)
-        ready = ready and key_ok and sdk_ok and not malformed
-        sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[p]})"
-        pin = spec.JUDGE_MODEL_PINS.get(p, "target")
-        key_str = ("present" if key_ok else "MISSING")
-        if malformed:
-            key_str = "present but MALFORMED (looks like a path/whitespace, not a key — check its VALUE)"
-        print(f"    {p} ({pin}): {env} {key_str}; SDK {sdk_str}")
-    return ready
+def _print_role_key(provider: str) -> bool:
+    """One provider's key + SDK readiness line (used by both the Target and Judge sections —
+    when they share a provider it's the same key, reported under each role). Non-keyed
+    providers pass through (Inspect handles them)."""
+    env = spec.API_ENV_VARS.get(provider)
+    if env is None:
+        return True
+    val = os.environ.get(env, "")
+    key_ok = bool(val)
+    malformed = key_looks_malformed(val)  # e.g. OPENAI_API_KEY=/…/.env — a path, not a key
+    sdk_ok = _sdk_installed(provider)
+    sdk_str = "installed" if sdk_ok else f"MISSING (uv sync --extra {_PROVIDER_EXTRA[provider]})"
+    key_str = "present" if key_ok else "MISSING"
+    if malformed:
+        key_str = "present but MALFORMED (looks like a path/whitespace, not a key — check its VALUE)"
+    print(f"    {provider} ({spec.JUDGE_MODEL_PINS[provider]}): {env} {key_str}; SDK {sdk_str}")
+    return key_ok and sdk_ok and not malformed
 
 
 def _print_api_lane_options() -> None:
@@ -871,9 +889,24 @@ def _keys_path(args: argparse.Namespace) -> int:
 def _keys_status(args: argparse.Namespace) -> int:
     from . import keys
 
+    # Role-aware (best-effort from ./aipsy-bench.yaml): show which role each provider key serves
+    # in THIS project — the target model, the judge panel, or both (one shared key per provider).
+    cfg = load_config(getattr(args, "config", None))
+    roles: dict[str, set[str]] = {}
+    ref = cfg.target if isinstance(cfg.target, str) else None
+    if ref and not is_mock_ref(ref):
+        tp = ref.split("/", 1)[0]
+        if tp in spec.API_ENV_VARS:
+            roles.setdefault(tp, set()).add("target")
+    if cfg.judges:
+        for jp in _judge_panel_providers(cfg.judges):
+            roles.setdefault(jp, set()).add("judge")
+
     print(f".env: {keys.env_path()}")
     for provider, present in keys.current_keys().items():
-        print(f"  {spec.API_ENV_VARS[provider]}: {'present' if present else 'not set'}")
+        role = roles.get(provider)
+        role_str = f"  ← needed for: {' + '.join(sorted(role))}" if role else ""
+        print(f"  {spec.API_ENV_VARS[provider]}: {'present' if present else 'not set'}{role_str}")
     return 0
 
 

@@ -81,3 +81,13 @@ def test_cli_keys_status_and_path(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "OPENAI_API_KEY: present" in out
     assert cli.main(["keys", "path"]) == 0
+
+
+def test_cli_keys_status_annotates_roles(tmp_path, monkeypatch, capsys):
+    # given a project config, keys status shows which ROLE each provider key serves
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "aipsy-bench.yaml").write_text("target: openai/gpt-5.4-mini\njudges: single:anthropic\n")
+    assert cli.main(["keys", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "OPENAI_API_KEY" in out and "needed for: target" in out
+    assert "ANTHROPIC_API_KEY" in out and "needed for: judge" in out

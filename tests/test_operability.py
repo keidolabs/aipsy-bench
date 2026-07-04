@@ -61,6 +61,21 @@ def test_doctor_reports_missing_keys(tmp_path, monkeypatch, capsys):
     assert rc == 1  # a missing key for the selected panel is a non-zero preflight
 
 
+def test_doctor_splits_target_and_judge_roles(capsys):
+    # role-clear preflight: TARGET readiness and JUDGE readiness as separate sections
+    main(["doctor", "--model", "openai/gpt-5.4-mini", "--judges", "single:anthropic"])
+    out = capsys.readouterr().out
+    assert "Target:" in out and "Judge:" in out
+    assert "openai (gpt-5.4-mini)" in out          # the target provider's readiness
+    assert "anthropic (claude-sonnet-4-6)" in out  # the judge provider's readiness
+
+
+def test_doctor_notes_shared_key_when_same_provider(capsys):
+    main(["doctor", "--model", "openai/gpt-5.4-mini", "--judges", "single"])
+    out = capsys.readouterr().out
+    assert "target & judge both use OPENAI_API_KEY" in out  # one key serves both roles
+
+
 # --------------------------------------------------------------------------
 # dry-run + max-cost — no scored calls
 # --------------------------------------------------------------------------
