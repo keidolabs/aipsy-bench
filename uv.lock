@@ -192,7 +192,6 @@ wheels = [
 
 [[package]]
 name = "aipsy-bench"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -236,7 +235,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
-provides-extras = ["openai", "anthropic", "google", "local"]
+provides-extras = ["anthropic", "google", "local", "openai"]
 
 [package.metadata.requires-dev]
 dev = [

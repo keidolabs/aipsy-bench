@@ -1,6 +1,6 @@
 [project]
 name = "aipsy-bench"
-version = "0.1.0"
+dynamic = ["version"]                # single source of truth: src/aipsy_bench/version.py
 description = "Open-source psychological-safety benchmark for conversational AI (Inspect AI based)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,6 +27,9 @@ local = ["huggingface-hub>=0.20", "openai"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/aipsy_bench/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aipsy_bench"]
