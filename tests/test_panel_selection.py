@@ -193,6 +193,14 @@ def _fake_inputs(monkeypatch, answers):
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(it))
 
 
+def _fake_getpass(monkeypatch, value=""):
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: value)
+
+
+def _no_save(*a, **k):
+    raise AssertionError("set_provider_key must NOT be called")
+
+
 def _viability(monkeypatch, *, viable, band):
     from aipsy_bench import keys, local_judge
     monkeypatch.setattr(local_judge, "viability",
@@ -212,8 +220,49 @@ def test_init_prompt_local_when_viable(monkeypatch):
 def test_init_prompt_single_provider_when_viable(monkeypatch):
     from aipsy_bench import cli
     _viability(monkeypatch, viable=True, band="ready")
-    _fake_inputs(monkeypatch, ["2", "2", "n"])  # single → anthropic → decline key-set
+    _fake_inputs(monkeypatch, ["2", "2"])  # single → anthropic
+    _fake_getpass(monkeypatch, "")          # hidden key prompt: Enter → skip
     assert cli._init_prompt_judges() == "single:anthropic"
+
+
+# ---- inline key-set during init: hidden prompt, never a visible confirm (the QA bug) ----
+
+def test_maybe_set_key_saves_via_hidden_prompt(monkeypatch, tmp_path):
+    from aipsy_bench import cli, keys
+    saved = {}
+    monkeypatch.setattr(keys, "set_provider_key",
+                        lambda p, v, **k: saved.update(p=p, v=v) or (tmp_path / ".env"))
+    _fake_getpass(monkeypatch, "sk-test-abc123")
+    # a secret must NEVER be read via a visible input() prompt
+    monkeypatch.setattr("builtins.input", _no_save)
+    cli._maybe_set_key("openai")
+    assert saved == {"p": "openai", "v": "sk-test-abc123"}
+
+
+def test_maybe_set_key_skip_on_empty(monkeypatch):
+    from aipsy_bench import cli, keys
+    monkeypatch.setattr(keys, "set_provider_key", _no_save)
+    _fake_getpass(monkeypatch, "")  # Enter → skip, no save, no raise
+    cli._maybe_set_key("openai")
+
+
+def test_maybe_set_key_rejects_pasted_path(monkeypatch, capsys):
+    from aipsy_bench import cli, keys
+    monkeypatch.setattr(keys, "set_provider_key", _no_save)  # a path is not a key → don't save it
+    _fake_getpass(monkeypatch, "/Users/me/proj/.env")
+    cli._maybe_set_key("openai")
+    assert "not saved" in capsys.readouterr().out.lower()
+
+
+def test_maybe_set_key_writes_env_end_to_end(monkeypatch, tmp_path):
+    # the SECOND half of the QA bug: the pasted key must actually LAND in .env — exercise the
+    # real keys.set_provider_key (no mock), with env_path() resolving to this dir's ./.env.
+    from aipsy_bench import cli
+    monkeypatch.chdir(tmp_path)
+    _fake_getpass(monkeypatch, "sk-proj-realish-KEY-999")
+    cli._maybe_set_key("openai")
+    env = (tmp_path / ".env").read_text()
+    assert "OPENAI_API_KEY" in env and "sk-proj-realish-KEY-999" in env
 
 
 def test_init_prompt_api_regime_when_not_viable(monkeypatch):

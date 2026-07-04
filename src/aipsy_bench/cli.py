@@ -853,25 +853,30 @@ def _render_config(params: dict) -> str:
 
 
 def _maybe_set_key(provider: str) -> None:
-    """Offer to save the chosen provider's key to the local .env inline during init
-    (hidden input, never via argv). Skipping is fine — doctor re-surfaces it later."""
+    """Offer to save the chosen provider's key to the local .env inline during init.
+
+    Goes STRAIGHT to a hidden prompt — NO visible ``[Y/n]`` confirm first: an echoing
+    ``input()`` confirm is a trap where users paste the secret and it lands in the terminal
+    /scrollback. getpass hides it; an empty entry (Enter) skips."""
     import getpass
 
     from . import keys
 
     var = spec.API_ENV_VARS[provider]
-    if input(f"Set {var} now? [Y/n]: ").strip().lower() not in ("", "y", "yes"):
-        return
     try:
-        key = getpass.getpass(f"  paste {var} (hidden): ").strip()
+        key = getpass.getpass(f"Paste {var} to save it now (input hidden; Enter to skip): ").strip()
     except (EOFError, KeyboardInterrupt):
         print("  skipped")
         return
-    if key:
-        path = keys.set_provider_key(provider, key)
-        print(f"  saved {var} → {path}  [{keys.mask(key)}]  (gitignored)")
-    else:
-        print("  skipped (nothing entered)")
+    if not key:
+        print(f"  skipped — set it later with: aipsy-bench keys set --provider {provider}")
+        return
+    if key_looks_malformed(key):  # a pasted path/whitespace, not a key — don't save a broken value
+        print(f"  ⚠ that looks like a path/whitespace, not a {var} value — NOT saved. "
+              f"Set the real key with: aipsy-bench keys set --provider {provider}")
+        return
+    path = keys.set_provider_key(provider, key)
+    print(f"  saved {var} → {path}  [{keys.mask(key)}]  (gitignored — never committed)")
 
 
 def _init_prompt_single_provider(present: dict[str, bool]) -> str:
