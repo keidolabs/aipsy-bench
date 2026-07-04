@@ -17,7 +17,7 @@ from inspect_ai import eval as inspect_eval
 from . import __version__, bundle, report, spec
 from .config import CONFIG_NAME, HttpTargetSpec, load_config
 from .gate import gate_result
-from .targets import ResolvedTarget, http_target, is_mock_ref, resolve_target
+from .targets import ResolvedTarget, http_target, is_mock_ref, resolve_target, validate_model_ref
 from .task import aipsy_bench, quick_scenario_ids
 from .validation import load_validation
 
@@ -508,6 +508,15 @@ def _doctor(args: argparse.Namespace) -> int:
         print(f"  data/v1 integrity: FAIL — {e}")
         data_ok = False
 
+    # Validate a Tier-0 model string offline so a bad ref is caught HERE, not as a run-setup
+    # crash. (mock / http targets don't have a model string to check.)
+    model_ref_ok = True
+    if ref and not is_mock_ref(ref) and not http_url:
+        chk = validate_model_ref(ref)
+        mark = {"ok": "", "warn": "⚠ ", "error": "✗ "}[chk["level"]]
+        print(f"  target model: {mark}{ref} — {chk['message']}")
+        model_ref_ok = chk["level"] != "error"
+
     ready = True
     if judges == "local":
         # The headline default: report local-judge readiness regardless of target.
@@ -543,7 +552,7 @@ def _doctor(args: argparse.Namespace) -> int:
     _print_path_recommendation()
 
     print(f"\n  resolved: target={http_url or ref}  judges={judges}  data_version={spec.DATA_VERSION}")
-    return 0 if (data_ok and ready) else 1
+    return 0 if (data_ok and ready and model_ref_ok) else 1
 
 
 def _print_local_judge_doctor() -> bool:
@@ -894,13 +903,34 @@ def _init_prompt_judges() -> str:
     return _init_prompt_single_provider(present)
 
 
+def _prompt_model_ref() -> str | None:
+    """Read a Tier-0 model string, validating structure before we write it to config —
+    a re-prompt on gibberish beats a crash at run time. Unknown provider = accept + warn
+    (Inspect may support it); empty = abort."""
+    print("model string as provider/model — e.g. openai/gpt-5.4-mini, "
+          "anthropic/claude-sonnet-4-6, google/gemini-2.5-flash, ollama/llama3, hf/<org>/<model>")
+    for _ in range(3):
+        ref = input("model string: ").strip()
+        if not ref:
+            return None
+        check = validate_model_ref(ref)
+        if check["level"] == "error":
+            print(f"  ✗ {check['message']}")
+            continue
+        if check["level"] == "warn":
+            print(f"  ⚠ {check['message']}")
+        return ref
+    print("  too many invalid entries — aborting", file=sys.stderr)
+    return None
+
+
 def _init_prompt() -> dict | None:
     print("aipsy-bench init — scaffold aipsy-bench.yaml\n")
     print("What are you benchmarking?")
     print("  [1] your own app via an HTTP /eval endpoint (recommended)")
     print("  [2] a bare model string, e.g. openai/gpt-5.4-mini")
     if (input("> ").strip() or "1") == "2":
-        ref = input("model string: ").strip()
+        ref = _prompt_model_ref()
         return {"kind": "model", "model_ref": ref, "judges": _init_prompt_judges()} if ref else None
     url = input("endpoint URL (e.g. http://localhost:3000/eval): ").strip()
     if not url:
@@ -929,6 +959,12 @@ def _init(args: argparse.Namespace) -> int:
                       "secret_header": args.secret_header, "secret_env": args.secret_env,
                       "conversation": args.conversation or "stateless", "judges": args.judges or "local"}
         else:
+            check = validate_model_ref(args.model)
+            if check["level"] == "error":  # don't scaffold a config that will crash `run`
+                print(f"error: {check['message']}", file=sys.stderr)
+                return 2
+            if check["level"] == "warn":
+                print(f"warning: {check['message']}", file=sys.stderr)
             params = {"kind": "model", "model_ref": args.model, "judges": args.judges or "local"}
     elif sys.stdin.isatty():
         params = _init_prompt()

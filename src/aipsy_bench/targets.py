@@ -35,6 +35,90 @@ MOCK_PREFIX = "mock"
 OK = "ok"
 FAILURE_STATUSES = ("target_error", "refusal", "empty", "truncated")
 
+# Model providers aipsy-bench recognizes for a friendly ``init``/``doctor`` pre-check.
+# Deliberately NOT exhaustive — Inspect is the source of truth for the open-weights long
+# tail, so an unrecognized provider is a soft WARN (still runs), never a hard block. A wrong
+# *model name* isn't checked here at all (too many; HF open-weights) — it surfaces as a clean
+# run-time resolution error / run failure. Update as Inspect adds providers.
+KNOWN_MODEL_PROVIDERS = frozenset({
+    "openai", "anthropic", "google", "mistral", "grok", "xai", "groq", "together",
+    "deepseek", "openrouter", "perplexity", "cohere", "fireworks", "openai-api",
+    "azureai", "bedrock", "vertex", "cf", "cloudflare", "goodfire",
+    "ollama", "hf", "vllm", "sglang", "transformers", "llama-cpp-python", "lmstudio",
+    "mockllm",
+})
+_PROVIDER_DISPLAY = ("openai, anthropic, google, ollama, hf, mistral, grok, together, groq, "
+                     "bedrock, vertex, azureai, vllm, openai-api")
+
+
+class TargetResolutionError(ValueError):
+    """A target model string could not be resolved — with a clean, actionable message
+    (never a raw traceback). Subclasses ValueError so existing CLI handling catches it."""
+
+
+def validate_model_ref(ref: str) -> dict:
+    """Offline sanity-check a Tier-0 model string BEFORE it reaches Inspect (used by
+    ``init``/``doctor``). No network, no key, no model load. Returns
+    ``{ok, level, provider, message}`` with ``level ∈ {ok, warn, error}``:
+
+    * ``error`` — structurally not a model string (no ``provider/``, whitespace, an empty
+      side): gibberish or a forgotten prefix → reject / re-prompt.
+    * ``warn``  — well-formed but the provider isn't one we recognize. Inspect MAY still
+      support it (open-weights long tail), so we DON'T block — the run resolves it for real.
+    * ``ok``    — ``provider/model`` with a recognized provider.
+
+    The *model name* is intentionally not verified (too many; HF open-weights) — a wrong
+    name surfaces as a clean run-time resolution error or a graceful run failure.
+    """
+    r = (ref or "").strip()
+    if is_mock_ref(r):
+        return {"ok": True, "level": "ok", "provider": "mock", "message": "mock target (offline)"}
+    if not r:
+        return {"ok": False, "level": "error", "provider": None,
+                "message": "no model string given — expected 'provider/model', e.g. openai/gpt-5.4-mini"}
+    if any(c.isspace() for c in r):
+        return {"ok": False, "level": "error", "provider": None,
+                "message": f"{ref!r} is not a model string (contains spaces) — expected a single "
+                           "'provider/model' token, e.g. openai/gpt-5.4-mini or ollama/llama3"}
+    if "/" not in r:
+        return {"ok": False, "level": "error", "provider": None,
+                "message": f"{ref!r} is missing the provider prefix — a bare model name won't "
+                           "resolve. Use 'provider/model', e.g. openai/gpt-5.4-mini, ollama/llama3"}
+    provider, _, model = r.partition("/")
+    if not provider or not model:
+        return {"ok": False, "level": "error", "provider": provider or None,
+                "message": f"{ref!r} is malformed — 'provider/model' needs both parts, "
+                           "e.g. anthropic/claude-sonnet-4-6"}
+    if provider.lower() not in KNOWN_MODEL_PROVIDERS:
+        return {"ok": True, "level": "warn", "provider": provider,
+                "message": f"provider '{provider}' isn't one aipsy-bench recognizes — if Inspect "
+                           "supports it the run works; otherwise it fails to resolve with a clear "
+                           f"error. Recognized include: {_PROVIDER_DISPLAY}."}
+    return {"ok": True, "level": "ok", "provider": provider,
+            "message": f"provider '{provider}' recognized (the model name is checked at run time)"}
+
+
+def _explain_resolution_error(ref: str, e: Exception) -> str:
+    """Turn an Inspect ``get_model`` exception into one clean, actionable line (Inspect's
+    own messages are decent but leak rich-markup / internals)."""
+    provider = ref.split("/", 1)[0] if "/" in ref else ref
+    msg = str(e)
+    etype = type(e).__name__
+    if "not recognized" in msg:
+        return (f"target model {ref!r}: provider {provider!r} is not a recognized model provider. "
+                f"Use one of: {_PROVIDER_DISPLAY} (see docs/adapters/).")
+    if etype == "PrerequisiteError" or "API_KEY" in msg.upper():
+        from . import spec
+        env = spec.API_ENV_VARS.get(provider)
+        hint = (f"set {env} — `aipsy-bench keys set --provider {provider}`"
+                if env else "check the provider's API key + SDK (uv sync --all-extras)")
+        return (f"target model {ref!r}: provider {provider!r} isn't ready — {hint}. "
+                "Run `aipsy-bench doctor` to preflight.")
+    if "format of" in msg:
+        return f"target model {ref!r}: expected 'provider/model', e.g. openai/gpt-5.4-mini."
+    first = msg.splitlines()[0] if msg else etype
+    return f"could not resolve target model {ref!r}: {first[:160]}"
+
 # A user message history is a list of {"role": ..., "content": ...} dicts.
 MessageHistory = list[dict[str, str]]
 TargetFn = Callable[[MessageHistory], str]
@@ -94,7 +178,17 @@ def resolve_target(ref: str) -> ResolvedTarget:
             model=mock_target_model(profile), ref=ref, adapter="mock",
             is_mock=True, mock_profile=profile,
         )
-    return ResolvedTarget(model=get_model(ref), ref=ref, adapter="model", is_mock=False)
+    # Validate structure first (a clear message beats Inspect's internal error), then let
+    # Inspect resolve it — wrapping ANY failure (unknown provider / missing key / SDK) as a
+    # typed, actionable error so a bad string is a clean exit, NEVER a run-setup traceback.
+    check = validate_model_ref(ref)
+    if not check["ok"]:
+        raise TargetResolutionError(check["message"])
+    try:
+        model = get_model(ref)
+    except Exception as e:  # noqa: BLE001 — normalize every provider's failure to one clean error
+        raise TargetResolutionError(_explain_resolution_error(ref, e)) from e
+    return ResolvedTarget(model=model, ref=ref, adapter="model", is_mock=False)
 
 
 # --------------------------------------------------------------------------
