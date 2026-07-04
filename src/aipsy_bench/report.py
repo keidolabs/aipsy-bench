@@ -163,7 +163,20 @@ def to_result_json(
     target_block = _target_block(log, target)
     disagreement = trust.judge_disagreement(samples)
     self_pref = trust.self_preference(target_block["ref"], judge_versions)
-    if self_pref:
+    # "Self-judging" = EVERY judge shares the target's family (the single:<p> + <p>-target
+    # case) — a stronger confound than gold's 1-of-3 partial overlap. Alert prominently with
+    # an actionable fix; a partial overlap stays an informational confound note.
+    self_judging = bool(self_pref) and set(self_pref) == set(judge_versions)
+    if self_judging:
+        other = next((p for p in spec.PROVIDERS if p not in self_pref), "anthropic")
+        warnings.append(
+            f"⚠ SELF-JUDGING — the judge and the target are the same provider "
+            f"({', '.join(self_pref)}). A model tends to favor its own family, so these scores may "
+            f"be falsely ELEVATED (self-preference bias, §15). For a less biased read, judge with a "
+            f"different provider: --judges single:{other}  (or --judges gold, where 2 of 3 judges "
+            "are independent)."
+        )
+    elif self_pref:
         warnings.append(
             f"self-preference confound — target family intersects judge(s) {self_pref}; "
             "those judges may favor the target (§15)"
@@ -195,6 +208,7 @@ def to_result_json(
         "judge_failures": judge_failures,
         "judge_disagreement": disagreement,
         "self_preference": self_pref,
+        "self_judging": self_judging,
         "warnings": warnings,
     }
 
@@ -253,6 +267,10 @@ def render_report(result_json: dict) -> str:
     if banner:
         bar = "═" * 78
         lines += [bar, banner, bar, ""]
+    self_judging = next((w for w in result_json["warnings"] if w.startswith("⚠ SELF-JUDGING")), None)
+    if self_judging:
+        bar = "─" * 78
+        lines += [bar, self_judging, bar, ""]
 
     t = result_json["target"]
     lines.append(f"aipsy-bench {result_json['tool_version']} · data {result_json['data_version']} · mode {result_json['mode']}")
@@ -311,7 +329,7 @@ def render_report(result_json: dict) -> str:
             lines.append("")
 
     for w in result_json["warnings"]:
-        if not w.startswith("⚠ DIRECTIONAL"):
+        if not w.startswith(("⚠ DIRECTIONAL", "⚠ SELF-JUDGING")):
             lines.append(f"warning: {w}")
     return "\n".join(lines)
 
@@ -350,6 +368,7 @@ a{color:var(--accent)}
 .callout{border-radius:10px;padding:14px 16px;margin:16px 0;font-size:13.5px;
   border:1px solid var(--border)}
 .callout.directional{background:var(--warn-bg);border-color:var(--warn)}
+.callout.selfjudge{background:var(--bad-bg);border-color:var(--bad)}
 .callout.local{background:var(--panel2)}
 .callout .tag{font-weight:700;letter-spacing:.02em}
 .verdict{display:flex;align-items:center;gap:16px;border-radius:12px;padding:18px 22px;
@@ -498,7 +517,8 @@ def render_html(result_json: dict) -> str:
 
     directional = next((w for w in warnings if w.startswith("⚠ DIRECTIONAL")), None)
     local_judge = next((w for w in warnings if w.startswith("◆ LOCAL JUDGE")), None)
-    other_warnings = [w for w in warnings if w not in (directional, local_judge)]
+    self_judging = next((w for w in warnings if w.startswith("⚠ SELF-JUDGING")), None)
+    other_warnings = [w for w in warnings if w not in (directional, local_judge, self_judging)]
 
     ai_trust = overall.get("AI_Trust")
     title = f"aipsy-bench · {t['ref']} · AI-Trust {_fmt(ai_trust)}"
@@ -530,6 +550,8 @@ def render_html(result_json: dict) -> str:
 
     if directional:
         parts.append(f'<div class="callout directional">{_h(directional)}</div>')
+    if self_judging:
+        parts.append(f'<div class="callout selfjudge">{_h(self_judging)}</div>')
     if local_judge:
         parts.append(f'<div class="callout local">{_h(local_judge)}</div>')
 

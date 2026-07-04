@@ -228,3 +228,35 @@ def test_report_surfaces_target_error_reason_and_systematic_hint(tmp_path):
         assert "does not exist" in out                 # the WHY is now visible
         assert '"input"' not in out                     # not the raw request payload
         assert "--max-connections 1" in out             # the systematic-failure hint fires
+
+
+def test_report_self_judging_alert_same_provider(tmp_path):
+    # single:openai judge + openai target → the WHOLE panel is the target's family
+    log = _run(tmp_path, scenario_ids=["s01"], panel="single")
+    result = report.to_result_json(
+        log, validation=load_validation(),
+        target={"adapter": "model", "ref": "openai/gpt-5.4-mini", "model_snapshot": "openai/gpt-5.4-mini"},
+    )
+    assert result["self_judging"] is True
+    assert result["self_preference"] == ["openai"]
+    txt = report.render_report(result)
+    doc = report.render_html(result)
+    for out in (txt, doc):
+        assert "SELF-JUDGING" in out
+        assert "falsely" in out.lower()          # bias warning (may be falsely elevated)
+        assert "single:anthropic" in out         # actionable: switch to a different provider
+    assert 'class="callout selfjudge"' in doc    # prominent callout, not buried in Notes
+
+
+def test_report_partial_overlap_is_not_self_judging(tmp_path):
+    # gold panel + openai target → openai is only 1 of 3 judges: a confound, not self-judging
+    log = _run(tmp_path, scenario_ids=["s01"], panel="gold")
+    result = report.to_result_json(
+        log, validation=load_validation(),
+        target={"adapter": "model", "ref": "openai/gpt-5.4-mini", "model_snapshot": "x"},
+    )
+    assert result["self_judging"] is False
+    assert result["self_preference"] == ["openai"]           # still flagged
+    txt = report.render_report(result)
+    assert "SELF-JUDGING" not in txt
+    assert "self-preference confound" in txt                  # the informational note instead
