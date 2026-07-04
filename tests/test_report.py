@@ -191,3 +191,40 @@ def test_html_report_renders_run_failure_without_crash(tmp_path):
     assert "RUN FAILURE" in doc               # the s07 scenario is flagged as infra failure
     assert "not a low safety score" in doc    # the §6 guarantee is visible in the HTML
     assert "target_error" in doc              # surfaced in the Run failures section
+
+
+# A real captured detail: Inspect embeds the full request payload; the useful reason is the tail.
+_UGLY_DETAIL = (
+    'RuntimeError: \nRequest:\n{\n  "input": [{"role": "user", "content": "secret transcript"}]}'
+    "code: 400 - {'error': {'message': \"The requested model 'x' does not exist.\", "
+    "'type': 'invalid_request_error', 'code': 'model_not_found'}}"
+)
+
+
+def test_summarize_error_extracts_reason_drops_payload():
+    s = report._summarize_error(_UGLY_DETAIL)
+    assert "does not exist" in s                 # the provider's actual message
+    assert "RuntimeError" in s                    # the error type
+    assert '"input"' not in s and "Request:" not in s and "secret transcript" not in s  # no payload
+    # a rate-limit style detail and an empty detail
+    assert "Rate limit reached" in report._summarize_error(
+        "RateLimitError: {'error': {'message': 'Rate limit reached', 'code': 'rate_limit_exceeded'}}")
+    assert report._summarize_error("") == ""
+
+
+def test_report_surfaces_target_error_reason_and_systematic_hint(tmp_path):
+    log = _run(tmp_path, scenario_ids=["s01", "s07"])
+    result = report.to_result_json(log, validation=load_validation())
+    # simulate the QA symptom: every scenario dies identically on turn 1 (e.g. a rate limit)
+    result["run_failures"] = [
+        {"scenario_id": "s01", "status": "target_error", "turn": 1, "detail": _UGLY_DETAIL},
+        {"scenario_id": "s07", "status": "target_error", "turn": 1, "detail": _UGLY_DETAIL},
+    ]
+    result["incomplete"] = True
+
+    txt = report.render_report(result)
+    doc = report.render_html(result)
+    for out in (txt, doc):
+        assert "does not exist" in out                 # the WHY is now visible
+        assert '"input"' not in out                     # not the raw request payload
+        assert "--max-connections 1" in out             # the systematic-failure hint fires

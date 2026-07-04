@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 
 from . import __version__
@@ -202,6 +203,49 @@ def _fmt(v) -> str:
     return f"{v:.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
 
 
+# A target error's detail (from Inspect) embeds the full request payload — pull out the
+# actual provider message / status so the report shows WHY, not a JSON dump.
+_ERR_MSG_RE = re.compile(r"""['"]message['"]\s*:\s*(['"])(.+?)\1""")
+_ERR_CODE_RE = re.compile(r"code:\s*\d{3}\b.*")
+
+
+def _summarize_error(detail: str, limit: int = 200) -> str:
+    """Concise, human-useful reason from a captured target-error ``detail`` — the provider's
+    message (``'message': "…"``) or an HTTP-ish ``code: NNN …`` tail, stripped of the request
+    payload Inspect embeds. Empty string if there's nothing meaningful."""
+    if not detail:
+        return ""
+    etype = detail.split(":", 1)[0].strip()
+    cleaned = detail.replace('\\"', '"').replace("\\'", "'")  # error text often repr-escapes quotes
+    m = _ERR_MSG_RE.search(cleaned)
+    if m:
+        core = m.group(2)
+    else:
+        m2 = _ERR_CODE_RE.search(cleaned)
+        core = m2.group(0) if m2 else re.split(r"\n?Request:", cleaned, maxsplit=1)[0]
+    core = " ".join(core.split())
+    out = core if (not etype or core.startswith(etype)) else f"{etype}: {core}"
+    return out if len(out) <= limit else out[: limit - 1].rstrip() + "…"
+
+
+def _systematic_failure_hint(run_failures: list) -> str | None:
+    """When every scenario dies identically on turn 1, it's a target/config problem, not
+    flaky content — point the dev at the likely causes instead of leaving N opaque errors."""
+    if len(run_failures) < 2:
+        return None
+    first = run_failures[0]
+    if first.get("turn") == 1 and all(
+        rf.get("turn") == 1 and rf.get("status") == first.get("status") for rf in run_failures
+    ):
+        return (
+            f"all {len(run_failures)} scenarios failed on turn 1 with the same target error — "
+            "this is a target config/access issue, not flaky content. Common causes: rate limit "
+            "(retry, or lower concurrency with --max-connections 1), the model isn't accessible on "
+            "your key, or quota. Run `aipsy-bench doctor` and check the reason above."
+        )
+    return None
+
+
 def render_report(result_json: dict) -> str:
     """Human-readable text report; prints the §0.3 directional banner prominently."""
     lines: list[str] = []
@@ -222,9 +266,15 @@ def render_report(result_json: dict) -> str:
     lines.append("")
 
     if result_json.get("run_failures"):
-        lines.append(f"Run failures ({len(result_json['run_failures'])}):")
-        for rf in result_json["run_failures"]:
-            lines.append(f"  ⚠ {rf['scenario_id']}: target {rf['status']} at turn {rf['turn']}")
+        rfs = result_json["run_failures"]
+        lines.append(f"Run failures ({len(rfs)}):")
+        for rf in rfs:
+            summary = _summarize_error(rf.get("detail", ""))
+            tail = f" — {summary}" if summary else ""
+            lines.append(f"  ⚠ {rf['scenario_id']}: target {rf['status']} at turn {rf['turn']}{tail}")
+        hint = _systematic_failure_hint(rfs)
+        if hint:
+            lines.append(f"  → {hint}")
         lines.append("")
 
     if result_json.get("judge_failures"):
@@ -511,12 +561,20 @@ def render_html(result_json: dict) -> str:
     parts.append(_scenario_details(result_json))
 
     if result_json.get("run_failures"):
-        items = "".join(
-            f'<li>⚠ {_h(rf["scenario_id"])}: target {_h(rf["status"])} at turn {_h(rf["turn"])}</li>'
-            for rf in result_json["run_failures"]
-        )
+        rfs = result_json["run_failures"]
+        rows = []
+        for rf in rfs:
+            summary = _summarize_error(rf.get("detail", ""))
+            tail = f" — {_h(summary)}" if summary else ""
+            rows.append(
+                f'<li>⚠ {_h(rf["scenario_id"])}: target {_h(rf["status"])} '
+                f'at turn {_h(rf["turn"])}{tail}</li>'
+            )
+        hint = _systematic_failure_hint(rfs)
+        if hint:
+            rows.append(f'<li><b>{_h(hint)}</b></li>')
         parts.append("<h2>Run failures</h2>")
-        parts.append(f'<ul class="warns">{items}</ul>')
+        parts.append(f'<ul class="warns">{"".join(rows)}</ul>')
 
     if other_warnings:
         parts.append("<h2>Notes</h2>")
