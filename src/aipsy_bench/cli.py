@@ -1117,6 +1117,7 @@ def _scenarios_list(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aipsy-bench", description="psychological-safety benchmark for conversational AI")
+    p.add_argument("--version", action="version", version=f"aipsy-bench {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run the benchmark against a target")
