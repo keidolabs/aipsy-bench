@@ -370,8 +370,8 @@ def ensure_model(
     try:
         from huggingface_hub import hf_hub_download
     except ImportError:
-        log("huggingface_hub is not installed — install the optional extra:\n"
-            f"  uv sync --extra local\n\n{_manual_setup()}")
+        log("huggingface_hub is missing (it is a base dependency) — reinstall aipsy-bench, "
+            f"or run `pip install huggingface-hub`.\n\n{_manual_setup()}")
         return {"status": "manual", "reason": "no_hf_hub"}
 
     token = token or os.environ.get("HF_TOKEN")

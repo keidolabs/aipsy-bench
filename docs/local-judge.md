@@ -8,7 +8,7 @@ off-the-shelf Gemma base** (composite ICC 0.64→0.75, crisis κ 0.66→0.82, em
 0.50→0.71, 99.7% clean parse) and is fit-for-purpose as a directional local dev judge.
 
 ```bash
-uv sync --extra local          # huggingface_hub, for `judge pull` (scoring needs no extra)
+uv sync                        # huggingface-hub (for `judge pull`) is a base dep; scoring is stdlib→Ollama
 uv run aipsy-bench judge pull   # download the FT GGUF from HF + register the Ollama tag
 uv run aipsy-bench judge status # verify Ollama + the model are ready
 uv run aipsy-bench run --model <your-target>   # judged locally, free
@@ -66,7 +66,7 @@ cold-load timeout.
 
 ### Automatic (`judge pull`)
 
-`aipsy-bench judge pull` (with `uv sync --extra local`) downloads the GGUF + Modelfile from the
+`aipsy-bench judge pull` downloads the GGUF + Modelfile from the
 **public** HF repo `keidolabs/aipsy-judge-1.0` (ungated — **no token needed**), appends
 `PARAMETER num_ctx 16384` (the judge prompt is ~5k tokens; a smaller context truncates the
 rubric), and runs `ollama create aipsy-judge -f Modelfile`. Idempotent — re-run with

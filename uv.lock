@@ -194,26 +194,15 @@ wheels = [
 name = "aipsy-bench"
 source = { editable = "." }
 dependencies = [
+    { name = "anthropic" },
+    { name = "google-genai" },
     { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "inspect-ai" },
+    { name = "openai" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-]
-
-[package.optional-dependencies]
-anthropic = [
-    { name = "anthropic" },
-]
-google = [
-    { name = "google-genai" },
-]
-local = [
-    { name = "huggingface-hub" },
-    { name = "openai" },
-]
-openai = [
-    { name = "openai" },
 ]
 
 [package.dev-dependencies]
@@ -224,18 +213,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'anthropic'" },
-    { name = "google-genai", marker = "extra == 'google'" },
+    { name = "anthropic" },
+    { name = "google-genai" },
     { name = "httpx" },
-    { name = "huggingface-hub", marker = "extra == 'local'", specifier = ">=0.20" },
+    { name = "huggingface-hub", specifier = ">=0.20" },
     { name = "inspect-ai", specifier = ">=0.3.235" },
-    { name = "openai", marker = "extra == 'local'" },
-    { name = "openai", marker = "extra == 'openai'" },
+    { name = "openai" },
     { name = "pydantic", specifier = ">=2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
-provides-extras = ["anthropic", "google", "local", "openai"]
 
 [package.metadata.requires-dev]
 dev = [
