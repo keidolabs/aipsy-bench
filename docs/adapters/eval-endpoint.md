@@ -91,7 +91,7 @@ card; a query string would.
 > **Reconstructing history.** aipsy-bench replays the **full transcript** on every call
 > (`conversation: stateless`, the default), so `messages` already carries the whole
 > conversation. If your prompt builder wants a formatted history string instead of an OpenAI
-> `messages` array, map it inline — see [`mojoe.md`](./mojoe.md) for a worked `Athlete:/Coach:`
+> `messages` array, map it inline — see [`coachella-example.md`](./coachella-example.md) for a worked `Athlete:/Coach:`
 > reconstruction.
 
 ## 2. Point aipsy-bench at it — from the CLI, no Python

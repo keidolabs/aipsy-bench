@@ -40,15 +40,42 @@ FAILURE_STATUSES = ("target_error", "refusal", "empty", "truncated")
 # tail, so an unrecognized provider is a soft WARN (still runs), never a hard block. A wrong
 # *model name* isn't checked here at all (too many; HF open-weights) — it surfaces as a clean
 # run-time resolution error / run failure. Update as Inspect adds providers.
-KNOWN_MODEL_PROVIDERS = frozenset({
-    "openai", "anthropic", "google", "mistral", "grok", "xai", "groq", "together",
-    "deepseek", "openrouter", "perplexity", "cohere", "fireworks", "openai-api",
-    "azureai", "bedrock", "vertex", "cf", "cloudflare", "goodfire",
-    "ollama", "hf", "vllm", "sglang", "transformers", "llama-cpp-python", "lmstudio",
-    "mockllm",
-})
-_PROVIDER_DISPLAY = ("openai, anthropic, google, ollama, hf, mistral, grok, together, groq, "
-                     "bedrock, vertex, azureai, vllm, openai-api")
+KNOWN_MODEL_PROVIDERS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "mistral",
+        "grok",
+        "xai",
+        "groq",
+        "together",
+        "deepseek",
+        "openrouter",
+        "perplexity",
+        "cohere",
+        "fireworks",
+        "openai-api",
+        "azureai",
+        "bedrock",
+        "vertex",
+        "cf",
+        "cloudflare",
+        "goodfire",
+        "ollama",
+        "hf",
+        "vllm",
+        "sglang",
+        "transformers",
+        "llama-cpp-python",
+        "lmstudio",
+        "mockllm",
+    }
+)
+_PROVIDER_DISPLAY = (
+    "openai, anthropic, google, ollama, hf, mistral, grok, together, groq, "
+    "bedrock, vertex, azureai, vllm, openai-api"
+)
 
 
 class TargetResolutionError(ValueError):
@@ -72,30 +99,59 @@ def validate_model_ref(ref: str) -> dict:
     """
     r = (ref or "").strip()
     if is_mock_ref(r):
-        return {"ok": True, "level": "ok", "provider": "mock", "message": "mock target (offline)"}
+        return {
+            "ok": True,
+            "level": "ok",
+            "provider": "mock",
+            "message": "mock target (offline)",
+        }
     if not r:
-        return {"ok": False, "level": "error", "provider": None,
-                "message": "no model string given — expected 'provider/model', e.g. openai/gpt-5.4-mini"}
+        return {
+            "ok": False,
+            "level": "error",
+            "provider": None,
+            "message": "no model string given — expected 'provider/model', e.g. openai/gpt-5.4-mini",
+        }
     if any(c.isspace() for c in r):
-        return {"ok": False, "level": "error", "provider": None,
-                "message": f"{ref!r} is not a model string (contains spaces) — expected a single "
-                           "'provider/model' token, e.g. openai/gpt-5.4-mini or ollama/llama3"}
+        return {
+            "ok": False,
+            "level": "error",
+            "provider": None,
+            "message": f"{ref!r} is not a model string (contains spaces) — expected a single "
+            "'provider/model' token, e.g. openai/gpt-5.4-mini or ollama/llama3",
+        }
     if "/" not in r:
-        return {"ok": False, "level": "error", "provider": None,
-                "message": f"{ref!r} is missing the provider prefix — a bare model name won't "
-                           "resolve. Use 'provider/model', e.g. openai/gpt-5.4-mini, ollama/llama3"}
+        return {
+            "ok": False,
+            "level": "error",
+            "provider": None,
+            "message": f"{ref!r} is missing the provider prefix — a bare model name won't "
+            "resolve. Use 'provider/model', e.g. openai/gpt-5.4-mini, ollama/llama3",
+        }
     provider, _, model = r.partition("/")
     if not provider or not model:
-        return {"ok": False, "level": "error", "provider": provider or None,
-                "message": f"{ref!r} is malformed — 'provider/model' needs both parts, "
-                           "e.g. anthropic/claude-sonnet-4-6"}
+        return {
+            "ok": False,
+            "level": "error",
+            "provider": provider or None,
+            "message": f"{ref!r} is malformed — 'provider/model' needs both parts, "
+            "e.g. anthropic/claude-sonnet-4-6",
+        }
     if provider.lower() not in KNOWN_MODEL_PROVIDERS:
-        return {"ok": True, "level": "warn", "provider": provider,
-                "message": f"provider '{provider}' isn't one aipsy-bench recognizes — if Inspect "
-                           "supports it the run works; otherwise it fails to resolve with a clear "
-                           f"error. Recognized include: {_PROVIDER_DISPLAY}."}
-    return {"ok": True, "level": "ok", "provider": provider,
-            "message": f"provider '{provider}' recognized (the model name is checked at run time)"}
+        return {
+            "ok": True,
+            "level": "warn",
+            "provider": provider,
+            "message": f"provider '{provider}' isn't one aipsy-bench recognizes — if Inspect "
+            "supports it the run works; otherwise it fails to resolve with a clear "
+            f"error. Recognized include: {_PROVIDER_DISPLAY}.",
+        }
+    return {
+        "ok": True,
+        "level": "ok",
+        "provider": provider,
+        "message": f"provider '{provider}' recognized (the model name is checked at run time)",
+    }
 
 
 def _is_missing_key_error(e: Exception) -> bool:
@@ -119,19 +175,28 @@ def _explain_resolution_error(ref: str, e: Exception) -> str:
     msg = str(e)
     etype = type(e).__name__
     if "not recognized" in msg:
-        return (f"target model {ref!r}: provider {provider!r} is not a recognized model provider. "
-                f"Use one of: {_PROVIDER_DISPLAY} (see docs/adapters/).")
+        return (
+            f"target model {ref!r}: provider {provider!r} is not a recognized model provider. "
+            f"Use one of: {_PROVIDER_DISPLAY} (see docs/adapters/)."
+        )
     if etype == "PrerequisiteError" or "API_KEY" in msg.upper():
         from . import spec
+
         env = spec.API_ENV_VARS.get(provider)
-        hint = (f"set {env} — `aipsy-bench keys set --provider {provider}`"
-                if env else "check the provider's API key + SDK (uv sync --all-extras)")
-        return (f"target model {ref!r}: provider {provider!r} isn't ready — {hint}. "
-                "Run `aipsy-bench doctor` to preflight.")
+        hint = (
+            f"set {env} — `aipsy-bench keys set --provider {provider}`"
+            if env
+            else "check the provider's API key + SDK (uv sync --all-extras)"
+        )
+        return (
+            f"target model {ref!r}: provider {provider!r} isn't ready — {hint}. "
+            "Run `aipsy-bench doctor` to preflight."
+        )
     if "format of" in msg:
         return f"target model {ref!r}: expected 'provider/model', e.g. openai/gpt-5.4-mini."
     first = msg.splitlines()[0] if msg else etype
     return f"could not resolve target model {ref!r}: {first[:160]}"
+
 
 # A user message history is a list of {"role": ..., "content": ...} dicts.
 MessageHistory = list[dict[str, str]]
@@ -146,9 +211,9 @@ class ResolvedTarget:
     # then constructs it from ``ref`` inside the eval context (post-.env), like the judges.
     model: Model | None
     ref: str
-    adapter: str                       # "mock" | "model" | "http" | "callable"
+    adapter: str  # "mock" | "model" | "http" | "callable"
     is_mock: bool
-    conversation: str = "stateless"    # stateless | session
+    conversation: str = "stateless"  # stateless | session
     mock_profile: str | None = None
     meta: dict = field(default_factory=dict)
 
@@ -191,8 +256,11 @@ def resolve_target(ref: str) -> ResolvedTarget:
     if is_mock_ref(ref):
         profile = ref.split(":", 1)[1] if ":" in ref else "safe"
         return ResolvedTarget(
-            model=mock_target_model(profile), ref=ref, adapter="mock",
-            is_mock=True, mock_profile=profile,
+            model=mock_target_model(profile),
+            ref=ref,
+            adapter="mock",
+            is_mock=True,
+            mock_profile=profile,
         )
     # Validate structure first (a clear message beats Inspect's internal error), then let
     # Inspect resolve it — wrapping ANY failure (unknown provider / missing key / SDK) as a
@@ -219,9 +287,9 @@ def resolve_target(ref: str) -> ResolvedTarget:
 # --------------------------------------------------------------------------
 def _display_model_name(ref: str) -> str:
     """A readable ``mockllm`` model-name segment derived from the target ref, so the live UI
-    shows the endpoint/label (e.g. ``mockllm/mojoe-coach``) instead of a bare ``mockllm/model``
+    shows the endpoint/label (e.g. ``mockllm/coachella-coach``) instead of a bare ``mockllm/model``
     that reads like a mock. Sanitized to a valid, bounded name."""
-    s = re.sub(r"^https?://", "", ref)                 # drop the scheme
+    s = re.sub(r"^https?://", "", ref)  # drop the scheme
     s = re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()
     return s[:48] or "target"
 
@@ -242,34 +310,47 @@ def _model_from_callable(fn: TargetFn, conversation: str, ref: str) -> Model:
             reply = fn(payload)
         except Exception as e:  # noqa: BLE001 — any target error is a run failure (§6)
             return ModelOutput.from_content(
-                model=label, content="", stop_reason="unknown",
+                model=label,
+                content="",
+                stop_reason="unknown",
                 error=f"{type(e).__name__}: {e}",
             )
         if reply is None:
-            return ModelOutput.from_content(model=label, content="", error="target returned None")
+            return ModelOutput.from_content(
+                model=label, content="", error="target returned None"
+            )
         return ModelOutput.from_content(model=label, content=str(reply))
 
     # mockllm carries the custom_outputs hook; the name segment is the readable target label.
     return get_model(f"mockllm/{label}", custom_outputs=_outputs)
 
 
-def callable_target(fn: TargetFn, *, conversation: str = "stateless", ref: str = "callable") -> ResolvedTarget:
+def callable_target(
+    fn: TargetFn, *, conversation: str = "stateless", ref: str = "callable"
+) -> ResolvedTarget:
     """Build a Tier-2 callable target from ``fn(message_history) -> reply``."""
     return ResolvedTarget(
         model=_model_from_callable(fn, conversation, ref),
-        ref=ref, adapter="callable", is_mock=False, conversation=conversation,
+        ref=ref,
+        adapter="callable",
+        is_mock=False,
+        conversation=conversation,
     )
 
 
 # --------------------------------------------------------------------------
 # Tier 1 — HTTP, OpenAI-chat-compatible (easy case only; no SSE/DSL)
 # --------------------------------------------------------------------------
-def _default_transport(url: str, headers: dict[str, str], payload: dict[str, Any]) -> Any:
+def _default_transport(
+    url: str, headers: dict[str, str], payload: dict[str, Any]
+) -> Any:
     import urllib.request
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        url, data=data, method="POST",
+        url,
+        data=data,
+        method="POST",
         headers={"Content-Type": "application/json", **headers},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — user-supplied endpoint
@@ -322,19 +403,25 @@ PROBE_TIMEOUT = 15
 Poster = Callable[[str, dict[str, str], dict[str, Any], float], tuple[int, str]]
 
 
-def _raw_post(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float) -> tuple[int, str]:
+def _raw_post(
+    url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float
+) -> tuple[int, str]:
     import urllib.error
     import urllib.request
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        url, data=data, method="POST",
+        url,
+        data=data,
+        method="POST",
         headers={"Content-Type": "application/json", **headers},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — user-supplied endpoint
             return resp.status, resp.read().decode(errors="replace")
-    except urllib.error.HTTPError as e:  # 4xx/5xx: capture the status instead of raising
+    except (
+        urllib.error.HTTPError
+    ) as e:  # 4xx/5xx: capture the status instead of raising
         try:
             return e.code, (e.read().decode(errors="replace") if e.fp else "")
         except Exception:  # noqa: BLE001
@@ -342,8 +429,11 @@ def _raw_post(url: str, headers: dict[str, str], payload: dict[str, Any], timeou
 
 
 def probe_endpoint(
-    url: str, headers: dict[str, str] | None = None, *,
-    timeout: float = PROBE_TIMEOUT, poster: Poster | None = None,
+    url: str,
+    headers: dict[str, str] | None = None,
+    *,
+    timeout: float = PROBE_TIMEOUT,
+    poster: Poster | None = None,
 ) -> dict[str, Any]:
     """Send one probe request to a Tier-1 HTTP target and classify the outcome.
 
@@ -358,30 +448,54 @@ def probe_endpoint(
     try:
         status, text = send(url, headers, body, timeout)
     except TimeoutError:
-        return {"ok": False, "kind": "timeout",
-                "message": f"connected but no response within {timeout:g}s — the server is up but slow "
-                           "(or the handler hung); a real run allows a longer --timeout"}
-    except OSError as e:  # URLError subclasses OSError: connection refused / DNS / TLS / …
-        return {"ok": False, "kind": "unreachable",
-                "message": f"not reachable ({type(e).__name__}) — is the server running at {url}?"}
+        return {
+            "ok": False,
+            "kind": "timeout",
+            "message": f"connected but no response within {timeout:g}s — the server is up but slow "
+            "(or the handler hung); a real run allows a longer --timeout",
+        }
+    except (
+        OSError
+    ) as e:  # URLError subclasses OSError: connection refused / DNS / TLS / …
+        return {
+            "ok": False,
+            "kind": "unreachable",
+            "message": f"not reachable ({type(e).__name__}) — is the server running at {url}?",
+        }
 
     if status == 404:
-        return {"ok": False, "kind": "not_found",
-                "message": "reached the server but there is no handler at this path (404) — check the route"}
+        return {
+            "ok": False,
+            "kind": "not_found",
+            "message": "reached the server but there is no handler at this path (404) — check the route",
+        }
     if status in (401, 403):
-        return {"ok": False, "kind": "unauthorized",
-                "message": f"reached the endpoint but auth was rejected ({status}) — check the header / secret"}
+        return {
+            "ok": False,
+            "kind": "unauthorized",
+            "message": f"reached the endpoint but auth was rejected ({status}) — check the header / secret",
+        }
     if 200 <= status < 300:
         try:
             parsed = json.loads(text) if isinstance(text, str) else text
             reply = _parse_reply(parsed)
         except Exception:  # noqa: BLE001 — any parse failure is a contract mismatch
-            return {"ok": False, "kind": "bad_shape",
-                    "message": f"reachable ({status}) but the response is not a {{reply}} / OpenAI shape — "
-                               "check the {messages} -> {reply} contract"}
+            return {
+                "ok": False,
+                "kind": "bad_shape",
+                "message": f"reachable ({status}) but the response is not a {{reply}} / OpenAI shape — "
+                "check the {messages} -> {reply} contract",
+            }
         preview = " ".join(reply.split())
         preview = (preview[:57] + "…") if len(preview) > 58 else preview
-        return {"ok": True, "kind": "ok", "message": f'reachable — endpoint replied ({status}): "{preview}"'}
-    return {"ok": False, "kind": "http_error",
-            "message": f"reached the endpoint (HTTP {status}) — it did not accept the probe payload; "
-                       "verify it takes {messages:[{role,content}]} -> {reply}"}
+        return {
+            "ok": True,
+            "kind": "ok",
+            "message": f'reachable — endpoint replied ({status}): "{preview}"',
+        }
+    return {
+        "ok": False,
+        "kind": "http_error",
+        "message": f"reached the endpoint (HTTP {status}) — it did not accept the probe payload; "
+        "verify it takes {messages:[{role,content}]} -> {reply}",
+    }

@@ -1,6 +1,6 @@
-# Worked example: benchmarking mojoe (a real deployed coach app)
+# Worked example: benchmarking 'coachella' app (a real deployed coach app with anonymized name)
 
-mojoe's AI coach is the canonical "real app": **stateful** (Supabase, last-10-message
+coachella's AI coach is the canonical "real app": **stateful** (Supabase, last-10-message
 window), **streaming** (SSE), **auth-gated** (Supabase Bearer), **rate-limited**
 (10 messages / free user — a 20×~10-turn run dies on scenario 1), reached over a
 `start → message → stream` handshake. Prompt assembly is
@@ -11,9 +11,9 @@ session storage are not what you're tuning). Take the recommended path: a statel
 `/eval` endpoint that **reuses `buildCoachPrompt`** — so the target keeps its Alex
 persona — but skips session persistence, the rate limit, and SSE.
 
-## 1. mojoe side — add `POST /api/ai-coach/eval` (≈30 lines)
+## 1. coachella side — add `POST /api/ai-coach/eval` (≈30 lines)
 
-> Cross-repo change in `mojoe-admin`. Do this with sign-off; it is a separate deploy.
+> Cross-repo change in `coachella`. Do this with sign-off; it is a separate deploy.
 
 `buildCoachPrompt` is `private static` today; expose a thin public wrapper, then:
 
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   const { messages, context } = await req.json();
 
   // aipsy-bench replays the full transcript each call (conversation: stateless),
-  // so reconstruct mojoe's context string + current message from `messages`.
+  // so reconstruct coachella's context string + current message from `messages`.
   const history = messages
     .slice(0, -1)
     .map((m: { role: string; content: string }) =>
@@ -60,7 +60,7 @@ aipsy-bench doctor --http-target http://localhost:3000/api/ai-coach/eval   # pre
 aipsy-bench run \
   --http-target http://localhost:3000/api/ai-coach/eval \
   --header x-eval-secret:$EVAL_SECRET \
-  --ref mojoe-coach \
+  --ref coachella-coach \
   --judges local --quick                                                   # fast inner loop
 ```
 
@@ -71,7 +71,7 @@ target:
   http: http://localhost:3000/api/ai-coach/eval
   headers: { x-eval-secret: ${EVAL_SECRET} }
   conversation: stateless          # the /eval endpoint is stateless; the bench owns history
-  ref: mojoe-coach
+  ref: coachella-coach
 judges: local
 ```
 
@@ -94,7 +94,7 @@ server sessions, SSE) instead of a stateless endpoint — see [`callable.md`](./
 
 ## Correctness guarantee on a real, rate-limited target
 
-mojoe's free tier caps at 10 messages — a full run *will* hit limits if you point at
+coachella's free tier caps at 10 messages — a full run *will* hit limits if you point at
 the production path. Whatever the transport returns on failure (HTTP 429, timeout,
 empty body), aipsy-bench classifies the turn (`target_error | refusal | empty |
 truncated`) and marks the **scenario a run failure** — it is never fed to the judge
