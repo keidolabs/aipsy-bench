@@ -19,6 +19,16 @@ def _args(argv):
     return cli.build_parser().parse_args(argv)
 
 
+# --- top-level flags ------------------------------------------------------
+def test_version_flag_prints_and_exits_zero(capsys):
+    from aipsy_bench import __version__
+
+    with pytest.raises(SystemExit) as exc:
+        _args(["--version"])
+    assert exc.value.code == 0
+    assert f"aipsy-bench {__version__}" in capsys.readouterr().out
+
+
 # --- header parsing -------------------------------------------------------
 def test_parse_headers_splits_on_first_colon():
     assert cli._parse_headers(["x-eval-secret:s", "Authorization:Bearer a:b"]) == {
