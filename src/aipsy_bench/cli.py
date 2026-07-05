@@ -555,6 +555,7 @@ def _doctor(args: argparse.Namespace) -> int:
     cfg_http = cfg.target if isinstance(cfg.target, HttpTargetSpec) else None
     http_url = args.http_target or (cfg_http.http if cfg_http else None)
     judges = args.judges or cfg.judges or "local"
+    judges_explicit = bool(args.judges or cfg.judges)   # chosen, or defaulted to local?
     ref = None if http_url else (
         args.model or args.target or (cfg.target if isinstance(cfg.target, str) else None) or "mock"
     )
@@ -573,7 +574,7 @@ def _doctor(args: argparse.Namespace) -> int:
     # shared between the roles when they coincide — reported under both so readiness is explicit.
     is_mock = (not http_url) and is_mock_ref(ref)
     target_ok = _doctor_target_section(args, cfg, ref, http_url, is_mock)
-    judge_ok = _doctor_judge_section(judges, is_mock)
+    judge_ok = _doctor_judge_section(judges, is_mock, judges_explicit)
 
     # Same-provider note: a frontier target + an API judge on the SAME provider read the same
     # key (same account) — tie it to the report's self-judging bias alert.
@@ -625,15 +626,31 @@ def _doctor_target_section(args: argparse.Namespace, cfg, ref, http_url, is_mock
     return _print_role_key(provider)
 
 
-def _doctor_judge_section(judges: str, is_mock: bool) -> bool:
+def _doctor_judge_section(judges: str, is_mock: bool, explicit: bool) -> bool:
     """JUDGE readiness: mock judges (offline), the local FT judge (Ollama + model + hardware),
-    or a frontier panel (each provider's key + SDK)."""
+    or a frontier panel (each provider's key + SDK).
+
+    A local judge that isn't set up only *fails* doctor when the lane was chosen explicitly
+    (``--judges local``). When ``local`` is merely the DEFAULT and some lane is usable (an API
+    key is present, or the box is hardware-viable to pull), it's an ADVISORY, not a failure —
+    doctor prints the viable path in "Recommended path" and ``run`` still hard-blocks. This keeps
+    a healthy target from reading as a red failure just because the offline judge isn't pulled."""
     if is_mock:
         print(f"  Judge: {judges} → offline mock judges (mock target — no keys or SDKs)")
         return True
     if spec.panel_base(judges) == "local":
         print("  Judge: local (offline FT judge via Ollama — needs no API key)")
-        return _print_local_judge_doctor()
+        ready = _print_local_judge_doctor()
+        if ready or explicit:
+            return ready
+        from . import keys, local_judge
+        has_path = local_judge.viability()["viable"] or any(keys.current_keys().values())
+        if has_path:
+            print("    → the local judge isn't set up on this box, but it's the *default* lane, "
+                  "not required: use an API judge (Recommended path below) or `aipsy-bench judge pull`.")
+        else:
+            print("    → no ready judge lane yet — run `aipsy-bench judge pull` or set an API key (below).")
+        return has_path
     models = ", ".join(f"{p}/{spec.JUDGE_MODEL_PINS[p]}" for p in sorted(_judge_panel_providers(judges)))
     print(f"  Judge: {judges} ({models})")
     ok = True

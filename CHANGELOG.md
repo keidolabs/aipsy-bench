@@ -13,7 +13,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- `doctor` no longer exits non-zero — reading as a red "failure" in the terminal — when the
+  **default** local judge isn't set up but the target is healthy and a usable lane exists (an API
+  key is present, or the box is hardware-viable). It's now an advisory. An explicit `--judges local`
+  that isn't ready still fails.
 
 ## [0.1.2] — 2026-07-05
 

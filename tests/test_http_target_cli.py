@@ -244,6 +244,56 @@ def test_doctor_probe_failure_flips_readiness(monkeypatch, capsys):
     assert rc == 1
 
 
+def _stub_local_judge_not_pulled(monkeypatch):
+    from aipsy_bench import local_judge
+
+    monkeypatch.setattr(local_judge, "status", lambda: {
+        "version": "aipsy-judge-1.0", "quant": "Q8_0", "tag": "aipsy-judge",
+        "running": True, "model_present": False, "ram_gb": 34.0, "ram_tight": True,
+    })
+    monkeypatch.setattr(local_judge, "viability", lambda: {
+        "viable": False, "band": "slow", "ollama_running": True,
+        "model_present": False, "detail": "34 GB unified memory",
+    })
+
+
+def test_doctor_default_local_judge_not_ready_is_advisory(monkeypatch, capsys):
+    # HTTP target OK + DEFAULT (unspecified) local judge not pulled + an API key present →
+    # doctor is ADVISORY (rc 0), not a red failure. Regression for "healthy endpoint reads red".
+    from aipsy_bench import keys
+
+    monkeypatch.setattr(targets, "_raw_post", lambda *a: (200, '{"reply": "ok"}'))
+    _stub_local_judge_not_pulled(monkeypatch)
+    monkeypatch.setattr(keys, "current_keys", lambda *a, **k: {"openai": True, "anthropic": False, "google": False})
+    rc = main(["doctor", "--http-target", "http://localhost:3000/eval"])   # no --judges → default local
+    out = capsys.readouterr().out
+    assert "endpoint: OK" in out
+    assert "not required" in out
+    assert rc == 0
+
+
+def test_doctor_explicit_local_judge_not_ready_still_fails(monkeypatch, capsys):
+    # But an EXPLICIT --judges local that isn't ready is a real failure (you chose that lane).
+    from aipsy_bench import keys
+
+    monkeypatch.setattr(targets, "_raw_post", lambda *a: (200, '{"reply": "ok"}'))
+    _stub_local_judge_not_pulled(monkeypatch)
+    monkeypatch.setattr(keys, "current_keys", lambda *a, **k: {"openai": True, "anthropic": False, "google": False})
+    rc = main(["doctor", "--http-target", "http://localhost:3000/eval", "--judges", "local"])
+    assert rc == 1
+
+
+def test_doctor_default_local_no_viable_lane_fails(monkeypatch, capsys):
+    # DEFAULT local, not pulled, AND no viable path (no keys, hardware not viable) → genuine rc 1.
+    from aipsy_bench import keys
+
+    monkeypatch.setattr(targets, "_raw_post", lambda *a: (200, '{"reply": "ok"}'))
+    _stub_local_judge_not_pulled(monkeypatch)
+    monkeypatch.setattr(keys, "current_keys", lambda *a, **k: {"openai": False, "anthropic": False, "google": False})
+    rc = main(["doctor", "--http-target", "http://localhost:3000/eval"])
+    assert rc == 1
+
+
 def test_doctor_no_probe_skips_the_call(monkeypatch, capsys):
     monkeypatch.setattr(
         targets,
