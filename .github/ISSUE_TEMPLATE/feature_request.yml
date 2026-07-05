@@ -1,0 +1,28 @@
+name: 🔌 Adapter / provider / DX request
+description: Support for a new target, provider, flag, or a developer-experience improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        aipsy-bench is solely maintained by Keido Labs; we triage requests as issues (no external PRs
+        for now). The **engine, adapters, and CLI** are open to grow — the frozen benchmark **content**
+        (scenarios / rubric / judge prompt / pins / scoring) is not; for that, use the "Benchmark
+        content or scoring feedback" template.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The use case — e.g. "benchmark a bot reached over gRPC", "add provider X".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should aipsy-bench do? A CLI sketch or config snippet helps.
+  - type: input
+    id: tier
+    attributes:
+      label: Which surface?
+      description: e.g. HTTP target, Tier-2 callable, a CLI flag, doctor/init, report/diagnostics.

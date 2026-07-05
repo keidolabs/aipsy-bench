@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Docs & how-to
+    url: https://github.com/keidolabs/aipsy-bench#readme
+    about: Quickstart, adapter guides (benchmark your own app), local-judge setup, run profiles.
+  - name: 🔐 Security vulnerability
+    url: https://github.com/keidolabs/aipsy-bench/security/policy
+    about: Report privately — do NOT open a public issue for security problems.
+  - name: ✉️ Other questions
+    url: mailto:michael@keidolabs.com
+    about: Anything not covered by the templates. aipsy-bench is solely maintained by Keido Labs.

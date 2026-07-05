@@ -1,0 +1,34 @@
+name: 🧪 Benchmark content or scoring feedback
+description: A concern about a scenario, a rubric metric, the judge, or the scoring — as feedback, not an edit.
+labels: ["benchmark-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is exactly the input we want — **as an issue.** The benchmark content is **frozen and
+        versioned** on purpose (comparable scores require a fixed instrument), so we don't take content
+        edits by PR; well-reasoned feedback here informs a future, revalidated `data/` version. Thank you.
+  - type: dropdown
+    id: area
+    attributes:
+      label: What is this about?
+      options:
+        - A scenario (s01–s20)
+        - A rubric metric or threshold
+        - The judge (local or frontier) behavior
+        - The scoring / AI-Trust composite / gate
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: What did you observe, and why is it a concern?
+      description: Be concrete — scenario id, metric, the turn, the score, and the reasoning.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: A transcript excerpt, `aipsy-bench explain` output, or citations. Redact any real user data (there should be none — scenarios are synthetic).

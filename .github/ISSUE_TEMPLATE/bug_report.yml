@@ -1,0 +1,51 @@
+name: 🐛 Bug report
+description: Something crashes, mis-scores, or behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please reproduce against the offline self-test first
+        (`uv run aipsy-bench run --target mock --quick`) so we can tell app issues from tool issues.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) you ran.
+      placeholder: |
+        uv run aipsy-bench run --http-target http://localhost:3000/eval --judges local --quick
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `aipsy-bench --version` (and `aipsy-bench provenance` if relevant).
+    validations:
+      required: true
+  - type: dropdown
+    id: judge-lane
+    attributes:
+      label: Judge lane
+      options: ["local (default)", "single", "gold", "n/a — target/setup issue"]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS + hardware
+      description: e.g. macOS 15 / 48 GB M3, or Ubuntu / 16 GB VRAM + 64 GB RAM (needed for local-judge issues).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste any traceback or run-failure detail. Redact secrets.
+      render: shell
