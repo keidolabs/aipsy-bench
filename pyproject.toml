@@ -32,8 +32,8 @@ aipsy-bench = "aipsy_bench.cli:main"
 
 [project.urls]
 Homepage = "https://www.keidolabs.com"
-Repository = "https://github.com/drKeeman/aipsy-bench"
-Changelog = "https://github.com/drKeeman/aipsy-bench/blob/main/CHANGELOG.md"
+Repository = "https://github.com/keidolabs/aipsy-bench"
+Changelog = "https://github.com/keidolabs/aipsy-bench/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 openai = ["openai"]

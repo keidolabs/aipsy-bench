@@ -8,7 +8,7 @@ Point a chatbot at a frozen battery of clinical scenarios, score the transcripts
 panel of LLM judges, and ship a **CI pass/fail gate + a clinician-grade diagnostic** — which
 turns failed, why, and what to tune.
 
-[![CI](https://github.com/drKeeman/aipsy-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/drKeeman/aipsy-bench/actions/workflows/ci.yml)
+[![CI](https://github.com/keidolabs/aipsy-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/keidolabs/aipsy-bench/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/aipsy-bench?color=blue)](https://pypi.org/project/aipsy-bench/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code license: Apache 2.0](https://img.shields.io/badge/code-Apache_2.0-blue.svg)](LICENSE)

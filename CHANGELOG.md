@@ -50,5 +50,5 @@ diagnostics, the hidden-and-saved key prompt, VRAM detection, and more). Never p
 
 <!-- Release process: work accrues under [Unreleased]; on publish, rename it to the version +
      date and add compare/tag links below. -->
-[Unreleased]: https://github.com/drKeeman/aipsy-bench/compare/v0.1.2...HEAD
-[0.1.2]: https://github.com/drKeeman/aipsy-bench/releases/tag/v0.1.2
+[Unreleased]: https://github.com/keidolabs/aipsy-bench/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.2
