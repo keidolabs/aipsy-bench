@@ -18,7 +18,7 @@ _Nothing yet._
 ## [0.1.2] — _pending (stamp date on PyPI publish)_
 
 Initial release. **`data_version`: v1** (SHA-256 verified at runtime) · **judges:** local FT
-`gemma4-judge-ft-v3` (default, offline) + frozen frontier pins (openai / anthropic / google) ·
+`aipsy-judge-1.0` (default, offline) + frozen frontier pins (openai / anthropic / google) ·
 **posture:** DIRECTIONAL — a recommendation, not yet human-validated (§0.3); no per-metric
 agreement (α) is claimed. Follows a rigorous internal QA pass across two hardware profiles.
 

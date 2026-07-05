@@ -1,10 +1,10 @@
-# The local judge (default) — `gemma4-judge-ft-v3` on Ollama
+# The local judge (default) — `aipsy-judge-1.0` on Ollama
 
 aipsy-bench's **default** judge is a fine-tuned model that runs **100% locally** via
-[Ollama](https://ollama.com) — no API key, no network, your machine. It is the
-`gemma4-judge-ft-v3` model from experiment **016-local-judge**: a LoRA-SFT of gemma4-26b
-distilled toward the clinician-corrected reweighted target. On the 016 gate it **beats
-off-the-shelf frontier-gemma** (composite ICC 0.64→0.75, crisis κ 0.66→0.82, empathy
+[Ollama](https://ollama.com) — no API key, no network, your machine. It is
+`aipsy-judge-1.0`: a LoRA fine-tune of a Gemma base model, distilled toward the
+clinician-corrected reweighted target. On our held-out evaluation it **beats the
+off-the-shelf Gemma base** (composite ICC 0.64→0.75, crisis κ 0.66→0.82, empathy
 0.50→0.71, 99.7% clean parse) and is fit-for-purpose as a directional local dev judge.
 
 ```bash
@@ -38,7 +38,7 @@ to live **entirely on the accelerator** for good speed.
 | Tier | Spec | Notes |
 |---|---|---|
 | **Recommended — Mac** | Apple Silicon, **48 GB+ unified memory** | Q8 fits fully in the GPU wired region alongside macOS; no CPU spill → fast. |
-| **Recommended — Linux** | discrete GPU **≥16 GB VRAM + ≥64 GB system RAM** | llama.cpp/Ollama split the model across VRAM + RAM (CPU offload); dedicated VRAM keeps it fast. (This is the "scrig" setup.) |
+| **Recommended — Linux** | discrete GPU **≥16 GB VRAM + ≥64 GB system RAM** | llama.cpp/Ollama split the model across VRAM + RAM (CPU offload); dedicated VRAM keeps it fast. |
 | **Minimum — works, slow** | 32–36 GB unified Mac | Q8 runs only after raising the Metal wired limit (below); ~12% spills to CPU → **~5 min/turn** (a full battery is many hours). Fine for occasional/overnight runs. |
 | **Lighter (not validated)** | 16 GB GPU / smaller Mac, Q4_K_M | Fits and is fast, but truncates ~16% of *this* fine-tune's outputs — a wiring smoke, not validated-quant scoring. |
 
@@ -67,22 +67,22 @@ cold-load timeout.
 ### Automatic (`judge pull`)
 
 `aipsy-bench judge pull` (with `uv sync --extra local`) downloads the GGUF + Modelfile from the
-HF repo `keidolabs/gemma4-judge-ft-v3` (private — needs `HF_TOKEN` in your env/.env), appends
+**public** HF repo `keidolabs/aipsy-judge-1.0` (ungated — **no token needed**), appends
 `PARAMETER num_ctx 16384` (the judge prompt is ~5k tokens; a smaller context truncates the
-rubric), and runs `ollama create gemma4-judge-ft -f Modelfile`. Idempotent — re-run with
+rubric), and runs `ollama create aipsy-judge -f Modelfile`. Idempotent — re-run with
 `--force` to rebuild the tag.
 
 ### Manual
 
 ```bash
 # 1. Install + start Ollama:  ollama serve
-# 2. Download the published Q8_0 GGUF + Modelfile (needs HF_TOKEN for the private repo):
-hf download keidolabs/gemma4-judge-ft-v3 \
-    gguf/gemma4-judge-ft-v3-q8.gguf gguf/Modelfile --local-dir ./gemma4-judge-ft
+# 2. Download the published Q8_0 GGUF + Modelfile (public repo — no token needed):
+hf download keidolabs/aipsy-judge-1.0 \
+    gguf/aipsy-judge-1.0-q8.gguf gguf/Modelfile --local-dir ./aipsy-judge
 # 3. Register the tag (the published GGUF is already Q8_0 — no --quantize):
-cd ./gemma4-judge-ft/gguf
+cd ./aipsy-judge/gguf
 printf '\nPARAMETER num_ctx 16384\n' >> Modelfile   # if not already present
-ollama create gemma4-judge-ft -f Modelfile
+ollama create aipsy-judge -f Modelfile
 # 4. Verify:
 aipsy-bench judge status
 ```
@@ -90,7 +90,7 @@ aipsy-bench judge status
 The Modelfile (from the HF repo, with `num_ctx` added) is:
 
 ```
-FROM ./gemma4-judge-ft-v3-q8.gguf
+FROM ./aipsy-judge-1.0-q8.gguf
 TEMPLATE {{ .Prompt }}
 RENDERER gemma4
 PARSER gemma4

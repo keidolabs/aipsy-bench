@@ -33,8 +33,8 @@ The only variable in a score is the target bot. Everything else is frozen and pi
   bump or any content change = a `data/` version bump, because it changes what the score means.
 - **Judge pins are exact snapshots** in `spec.py` (§8). Match what the 014 *validated* run
   used — confirm against `…/REGISTRATION.md`, don't assume.
-- **The DEFAULT judge is LOCAL** (`--judges local`): the fine-tuned `gemma4-judge-ft-v3`
-  (exp 016) served by a local Ollama — 100% offline, no API key. It is a **new frozen
+- **The DEFAULT judge is LOCAL** (`--judges local`): the fine-tuned `aipsy-judge-1.0`
+  (public repo `keidolabs/aipsy-judge-1.0`) served by a local Ollama — 100% offline, no API key. It is a **new frozen
   instrument** pinned in `spec.py` (Ollama tag, HF repo + GGUF sha256, quant `Q8_0`, version,
   `num_ctx`/`seed`) — distinct from the frontier pins, so it is **NOT a `data/` bump** (the
   `data/v1` content is unchanged; the FT was trained on that same frozen `judge_prompt.md`). It

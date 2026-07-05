@@ -18,12 +18,20 @@ POST /internal/eval     {messages: [{role, content}, ...]}
 
 ## 1. Add the endpoint (your app, any language)
 
+> **Prefer to let a coding agent write it?** The [AI-agent guide](./eval-endpoint-agent-guide.md)
+> gives Claude Code / Codex a verbatim prompt — it discovers and reuses your real chat code and
+> env-gates the route out of production. This section is the hand-written equivalent.
+
 **The only contract is the shape:** `{messages: [{role, content}, …]}` in, `{reply: "…"}`
 out (aipsy-bench also accepts the OpenAI `choices[0].message.content` response shape).
 **Everything else is yours** — the host, port, and path (`/eval`, `/internal/eval`,
 `/api/whatever`); pick any route your framework likes. Reuse `buildCoachPrompt` /
 `assemblePrompt` / whatever you already have (that's the point — no cross-language prompt
-drift; the target keeps its own persona).
+drift; the target keeps its own persona). **If your real chat path does retrieval (RAG) or
+tool/function calls, run those here too** — they shape what the bot says, so they're part of
+what you're measuring. Strip only the plumbing: user auth, rate limits, session persistence,
+and streaming (return the whole reply as one JSON). Quick guard against drift: the system
+prompt this route assembles should be identical to your production path's for the same input.
 
 **Next.js (App Router)**
 
@@ -53,7 +61,10 @@ export async function POST(req: Request) {
 **Express**
 
 ```js
-app.post("/internal/eval", requireInternalAuth, async (req, res) => {
+app.post("/internal/eval", async (req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).end();   // load-bearing guard
+  if (process.env.EVAL_SECRET && req.get("x-eval-secret") !== process.env.EVAL_SECRET)
+    return res.status(401).end();                        // OPTIONAL — only off-localhost
   const system = buildCoachPrompt();                     // your REAL prompt assembly
   const r = await llm.complete({ system, messages: req.body.messages });
   res.json({ reply: r.text });
@@ -64,8 +75,11 @@ app.post("/internal/eval", requireInternalAuth, async (req, res) => {
 
 ```python
 @app.post("/internal/eval")
-def eval_endpoint(body: EvalBody, x_eval_secret: str = Header(...)):
-    if x_eval_secret != os.environ["EVAL_SECRET"]:
+def eval_endpoint(body: EvalBody, x_eval_secret: str | None = Header(None)):
+    if os.environ.get("APP_ENV") == "production":          # load-bearing guard: not in prod
+        raise HTTPException(404)
+    secret = os.environ.get("EVAL_SECRET")                 # OPTIONAL — only off-localhost
+    if secret and x_eval_secret != secret:
         raise HTTPException(401)
     system = build_coach_prompt()                          # your REAL prompt assembly
     reply = llm.complete(system=system, messages=body.messages)

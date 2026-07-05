@@ -1,24 +1,45 @@
-# aipsy-bench
+<div align="center">
 
-An **open-source psychological-safety benchmark for conversational AI**. Point it at a
-chatbot, run a frozen battery of clinical scenarios through the bot, score each transcript
-with a frozen panel of LLM judges against a frozen clinical rubric, and get a **CI pass/fail
-gate plus a clinician-grade diagnostic** — which turns failed, why, and what to tune.
+# 🛡️ aipsy-bench
+
+**Open-source psychological-safety benchmark for conversational AI**
+
+Point a chatbot at a frozen battery of clinical scenarios, score the transcripts with a frozen
+panel of LLM judges, and ship a **CI pass/fail gate + a clinician-grade diagnostic** — which
+turns failed, why, and what to tune.
+
+[![CI](https://github.com/drKeeman/aipsy-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/drKeeman/aipsy-bench/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aipsy-bench?color=blue)](https://pypi.org/project/aipsy-bench/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+[![Code license: Apache 2.0](https://img.shields.io/badge/code-Apache_2.0-blue.svg)](LICENSE)
+[![Data license: CC BY 4.0](https://img.shields.io/badge/data-CC_BY_4.0-informational.svg)](data/v1/DATA_LICENSE)
+[![Built on Inspect AI](https://img.shields.io/badge/built_on-Inspect_AI-6f42c1.svg)](https://inspect.aisi.org.uk/)
+![Status: Directional](https://img.shields.io/badge/status-directional-orange.svg)
+
+**[Quickstart](#quickstart)** · **[Benchmark your app](docs/adapters/README.md)** · **[Local judge](docs/local-judge.md)** · **[Run profiles](#run-profiles)** · **[What a score means](#what-a-score-means)**
+
+<sub>Built and maintained by <a href="https://www.keidolabs.com"><b>Keido Labs</b></a></sub>
+
+</div>
+
+---
 
 It is a **benchmark** (fixed content, comparable scores), not a framework. The content — 20
-scenarios + a 6-metric rubric + the judge prompt — is verbatim from the 014 research
-experiment. The engine is [Inspect AI](https://inspect.aisi.org.uk/); we ship a Task, a
+scenarios + a 6-metric rubric + the judge prompt — is verbatim from our source research study
+(documented in the forthcoming methodology preprint). The engine is
+[Inspect AI](https://inspect.aisi.org.uk/); we ship a Task, a
 Solver, and a Scorer, not a new runner.
 
-> ## ⚠ DIRECTIONAL — a recommendation, not a rubber-stamp
-> The premise is "the judge panel is validated against human clinical experts." That
-> validation (014's human-vs-judge agreement study) is **running in parallel** and has not yet
-> landed. So aipsy-bench ships now as a **directional, methodology-transparent, reproducible**
-> reading — *run it yourself to reproduce* — not an authoritative, human-validated safety
-> rating. The **CI gate is functional**: a metric fails the build against the thresholds *you*
-> set (your policy, not a validated rating). But **no validated per-metric agreement (α) number
-> is claimed** until the study lands — don't cite these as validated agreement. When it lands,
-> the directional reading *upgrades* to validated authority.
+> [!IMPORTANT]
+> **⚠ Directional — a recommendation, not a rubber-stamp.** The premise is "the judge panel is
+> validated against human clinical experts." That validation — a **multi-rater human-vs-judge
+> agreement study** — is **running in parallel** and has not yet landed. So aipsy-bench ships now
+> as a **directional, methodology-transparent, reproducible** reading — *run it yourself to
+> reproduce* — not an authoritative, human-validated safety rating. The **CI gate is functional**:
+> a metric fails the build against the thresholds *you* set (your policy, not a validated rating).
+> But **no validated per-metric agreement (α) number is claimed** until the study lands — don't
+> cite these as validated agreement. When it lands, the directional reading *upgrades* to
+> validated authority.
 
 ## Quickstart
 
@@ -29,9 +50,9 @@ uv sync
 uv run aipsy-bench run --target mock --quick
 
 # Set up the LOCAL judge (the default): a fine-tuned model served by Ollama, so the whole
-# benchmark runs 100% locally — no API key, no network. Needs Ollama running + HF_TOKEN.
+# benchmark runs 100% locally — no API key, no network. Needs only Ollama running.
 uv sync --extra local
-uv run aipsy-bench judge pull          # downloads the FT GGUF from HF, registers the Ollama tag
+uv run aipsy-bench judge pull          # downloads the GGUF from HF (public, no token), registers the Ollama tag
 uv run aipsy-bench judge status        # verify Ollama + the model are ready
 
 # Run any target, judged locally (free). Only the TARGET may need a key:
@@ -42,11 +63,17 @@ uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --quick
 uv run aipsy-bench init --http-target http://localhost:3000/eval   # scaffold aipsy-bench.yaml
 uv run aipsy-bench doctor                                          # preflight + probe the endpoint
 uv run aipsy-bench run --judges local --quick                      # the URL is yours; --header if gated
-# → full recipe (endpoint snippets + the pre-release loop): docs/adapters/eval-endpoint.md
+# → full recipe (endpoint snippets, agent-built option, pre-release loop): docs/adapters/
 
 # Browse the public benchmark content:
 uv run aipsy-bench scenarios list
 ```
+
+> **Benchmarking your own app?** See the [adapter guides](docs/adapters/README.md): a stateless
+> `/eval` endpoint (localhost-first, fully offline) you write by hand
+> ([cookbook](docs/adapters/eval-endpoint.md)) or have a
+> [coding agent build](docs/adapters/eval-endpoint-agent-guide.md), plus a Tier-2 Python
+> [callable](docs/adapters/callable.md) for apps that must own auth / sessions / SSE.
 
 > **Prefer the frontier judges** (the official/citable `gold` lane) instead of the local
 > default? That's an alternative lane — install the provider SDKs + keys
@@ -57,7 +84,7 @@ uv run aipsy-bench scenarios list
 > [docs/local-judge.md](docs/local-judge.md) for setup, hardware requirements, and the
 > directional positioning.
 >
-> **Hardware:** the Q8_0 model is ~29 GB resident. Recommended: a **48 GB+ unified-memory Mac**,
+> **Hardware:** the Q8_0 model is ~27 GB resident. Recommended: a **48 GB+ unified-memory Mac**,
 > or a **Linux box with ≥16 GB VRAM + ≥64 GB RAM** (discrete-GPU offload). A 32–36 GB Mac works
 > but is slow (~5 min/turn) and needs the Metal wired-limit raised — see the docs.
 
@@ -66,7 +93,7 @@ the remediation cards), and a share `card.svg`/`card.png` + `badge.svg` (skip wi
 
 ### Run profiles
 
-- `--judges local` (**default**) — the offline fine-tuned judge (`gemma4-judge-ft-v3`) served
+- `--judges local` (**default**) — the offline fine-tuned judge (`aipsy-judge-1.0`) served
   by Ollama. No API key, no network (needs a 48 GB+ Mac or a 16 GB-VRAM/64 GB-RAM Linux box —
   see [docs/local-judge.md](docs/local-judge.md)). Its **own comparability lane** —
   comparable to other local runs, **never to gold**. Directional by construction and
@@ -79,7 +106,7 @@ the remediation cards), and a share `card.svg`/`card.png` + `badge.svg` (skip wi
 - `--quick` — smoke subset (one scenario per domain + both crisis scenarios). Directional
   only; never feeds a card or the leaderboard.
 - `--scenario s06,s07` — run a subset.
-- `--baseline-prompt` — inject the 014 baseline system prompt to reproduce the published
+- `--baseline-prompt` — inject the research baseline system prompt to reproduce the published
   frontier baseline. **By default the target keeps its own system prompt** (the bot as
   deployed); aipsy-bench sends only the scripted user turns.
 - `--judge-override anthropic=claude-haiku-4-5` — swap a pinned judge for a cheaper one
@@ -120,12 +147,12 @@ offline on Ollama); the frontier panels need a key per judge.
 
 | Panel | Keys needed |
 |---|---|
-| `--judges local` (**default**) | none to run; `HF_TOKEN` once for `judge pull` (private repo) |
+| `--judges local` (**default**) | **none** — `judge pull` is token-free (public, ungated repo) |
 | `--judges single` | `OPENAI_API_KEY` |
 | `--judges gold` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` |
 
 A real target may still need its own provider key even with the local judge (only the *judge*
-is local). Set `HF_TOKEN` (for `judge pull`) the same way as the provider keys below.
+is local). The local judge itself needs no key — `judge pull` fetches from a public, ungated repo.
 
 Set them the friendly way (interactive, input hidden, written to a gitignored `.env`):
 
@@ -178,10 +205,22 @@ battery. Out of scope for v1 (named here, not silently mishandled):
 
 ## Data residency
 
-The bench drives **synthetic** scenarios. The judges only ever see the target bot's replies
-to our public scripted users — **no real end-user data leaves your environment.** Combined
-with judge-provider routing (enterprise feature, later), an org can run the whole pipeline
-inside its own cloud boundary.
+The benchmark drives **synthetic, public scripted** scenarios through your bot — the "user" turns
+are ours and carry no real end-user data. What differs by lane is **where your bot's replies get
+scored**:
+
+- **Local judge (`--judges local`, the default) — fully in your boundary.** Scoring runs on your own
+  machine via Ollama; the transcript is **never sent to any third-party provider** and nothing leaves
+  your environment. This is the lane for sensitive transcripts — real user data via the SDK,
+  regulated / PHI content — where an API judge structurally *cannot* offer the same guarantee.
+- **Any API judge (`--judges single` or `--judges gold`) — the transcript leaves your environment.**
+  Your bot's replies are sent to the judge provider(s) — OpenAI / Anthropic / Google, whichever that
+  lane uses — for scoring, billed to your keys. In pure benchmark mode that's only your bot's answers
+  to our public scripted prompts (still no real *end-user* data), but the target's outputs do go out.
+
+So the **local-judge default already runs the whole pipeline inside your own boundary** — no
+enterprise routing required. (For teams that want the *frontier* lane in-boundary too, routing the
+pinned API judges through your own Azure / Vertex / gateway is a later enterprise feature.)
 
 ## Development
 
@@ -193,7 +232,18 @@ uv run ruff check .    # lint
 CI runs the suite offline with **no provider keys** — every test is deterministic against the
 mock target + mock judges.
 
-## Licenses (decisions pending — see BUILD_SPEC §11)
+## Licenses
 
-- **Code:** Apache-2.0 or MIT (to be decided before any public push).
-- **Data** (`data/v1/` — scenarios + rubric): likely CC BY 4.0 (see `data/v1/DATA_LICENSE`).
+- **Code:** Apache-2.0 (see [`LICENSE`](LICENSE)).
+- **Data** (`data/v1/` — the scenarios, rubric, and judge prompt): **CC BY 4.0**
+  (see [`data/v1/DATA_LICENSE`](data/v1/DATA_LICENSE)) — the standard content license, and the
+  same one the forthcoming methodology preprint will carry.
+- **Local judge model** ([`keidolabs/aipsy-judge-1.0`](https://huggingface.co/keidolabs/aipsy-judge-1.0),
+  on Hugging Face): Apache-2.0, inherited from its Gemma-4 base model's terms.
+
+---
+
+<div align="center">
+<sub><b>aipsy-bench</b> — built and maintained by <a href="https://www.keidolabs.com">Keido Labs</a><br/>
+<a href="LICENSE">Apache-2.0</a> (code) · <a href="data/v1/DATA_LICENSE">CC BY 4.0</a> (data) · directional until the human-validation study lands</sub>
+</div>

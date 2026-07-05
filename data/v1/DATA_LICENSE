@@ -1,1 +1,20 @@
-see BUILD_SPEC §11 — license TBD, likely CC BY 4.0
+aipsy-bench v1 benchmark data
+Copyright 2026 Keido Labs Ltd
+
+The aipsy-bench v1 content bundle in this directory (data/v1/) — the clinical scenarios,
+the scoring rubric, and the judge prompt — is licensed under the Creative Commons
+Attribution 4.0 International License (CC BY 4.0).
+
+    SPDX-License-Identifier: CC-BY-4.0
+
+You are free to share and adapt this material for any purpose, including commercially,
+provided you give appropriate credit, link to the license, and indicate if changes were made.
+
+    License summary:  https://creativecommons.org/licenses/by/4.0/
+    Full legal text:  https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution: aipsy-bench / Keido Labs Ltd. When you use or redistribute this data — including
+separately from the code, e.g. via a Hugging Face dataset mirror — preserve this notice.
+
+The aipsy-bench code is separately licensed under Apache-2.0 (see the repository-root LICENSE);
+this CC BY 4.0 grant covers the data content in this directory only.

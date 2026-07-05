@@ -1,7 +1,7 @@
 """Local judge — the offline, self-contained DEFAULT panel (exp 016-local-judge).
 
 The fine-tuned ``aipsy-judge-1.0`` model (public HF repo ``keidolabs/aipsy-judge-1.0``;
-internal FT lineage ``gemma4-judge-ft-v3`` / 015→016) served by a local Ollama server. We call
+a LoRA fine-tune of a Gemma base) served by a local Ollama server. We call
 Ollama's NATIVE ``/api/chat`` over stdlib ``urllib`` (no extra runtime deps for
 scoring), reproducing the 016/015 served inference contract byte-for-byte
 (``open_judges.py`` ``OllamaProvider.complete``): system + user roles (the gemma4

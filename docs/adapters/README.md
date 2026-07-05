@@ -12,8 +12,10 @@ your bot is reached. Pick the lowest tier that fits.
 
 **Most adopters want Tier 1.** Add one stateless `/eval` endpoint and drive it straight from
 the CLI — see the [`/eval` cookbook](./eval-endpoint.md) (framework-agnostic, localhost-first,
-fully offline with the local judge). Only reach for Tier 2 when a stateless endpoint is
-genuinely impossible.
+fully offline with the local judge). Don't want to hand-write it? The
+[AI-agent guide](./eval-endpoint-agent-guide.md) gives you a verbatim prompt for a coding agent
+(Claude Code / Codex) that builds the route — env-gated out of production — for you. Only reach for Tier 2 when a stateless
+endpoint is genuinely impossible.
 
 ## Recommended integration for a real app: a stateless `/eval` endpoint
 
@@ -22,7 +24,7 @@ production session storage, rate limits, and SSE streaming, add one thin endpoin
 that **reuses your real prompt assembly** but skips the operational machinery:
 
 ```
-POST /internal/eval        {messages: [{role, content}, ...], context?: {...}}
+POST /internal/eval        {messages: [{role, content}, ...]}
                         ->  {reply: "..."}
 ```
 

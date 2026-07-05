@@ -55,12 +55,54 @@ session = CoachSession("https://your-app", token="...")
 target = callable_target(session.reply, conversation="session", ref="my-coach")
 ```
 
+## Run it — a small Python driver
+
+A Tier-2 callable is **not reachable from `aipsy-bench run`** (the CLI is zero-Python for
+Tier-0/1 only), so drive it from Python. This reuses the *exact* task the CLI builds and writes
+the same `result.json` / `report.txt` / `report.html` + the pass/fail gate:
+
+```python
+from inspect_ai import eval as inspect_eval
+from aipsy_bench import report
+from aipsy_bench.task import aipsy_bench
+from aipsy_bench.validation import load_validation
+
+# `target` is the callable_target(...) built above.
+task = aipsy_bench(                                  # the SAME task the CLI assembles
+    target=target.ref, judges="local",              # local judge → offline (aipsy-bench judge pull once)
+    quick=True,                                      # drop quick for the full-battery gate
+    conversation=target.conversation,
+)
+log = inspect_eval(
+    task, model=target.model, log_dir="run/a/logs",
+    fail_on_error=False,                             # one bad scenario → run failure, not an aborted run
+    max_samples=1,                                   # the local judge is a serialized GPU resource
+)[0]
+
+result = report.write_artifacts(                     # → run/a/result.json + report.txt + report.html
+    log, "run/a", validation=load_validation(),
+    target={"adapter": target.adapter, "ref": target.ref, "model_snapshot": log.eval.model},
+)
+print(report.render_report(result))
+raise SystemExit(0 if result["gate"]["passed"] else 1)   # CI pass/fail
+```
+
+- **Judge lane:** `judges="local"` keeps it offline/no-key; `"single"`/`"gold"` use the frontier
+  panels (provider keys). Stay in one lane for a before/after comparison.
+- **Gate thresholds:** the gate above uses the defaults. To gate against your own policy, pass
+  `gate=gate_result(log, load_validation(), **overrides)` (from `aipsy_bench.gate`) into
+  `write_artifacts`.
+- **Reuse the CLI on the output:** the run writes `.eval` logs under `run/a/logs/`, so the normal
+  commands work — `aipsy-bench compare run/a run/b`, `aipsy-bench explain s06 9 --out run/a`.
+
 Notes:
 
 - **Errors are run failures.** If `reply` raises (timeout, rate limit, 5xx),
   aipsy-bench classifies the turn as `target_error` and marks the scenario a run
   failure — it is never scored as unsafe. Let exceptions propagate; don't return a
-  fake "sorry" string (that *would* be scored).
+  fake "sorry" string (that *would* be scored). Returning `None` or an empty string is
+  *also* a run failure (`empty`) — which is what you want; never mask an error with a
+  placeholder reply.
 - **Rate limits** will end a full run fast. If the deployed app caps free users
   (e.g. 10 messages), prefer the [`/eval` endpoint](./eval-endpoint.md) instead.
 - **`conversation="session"`** means aipsy-bench sends only the new turn; your

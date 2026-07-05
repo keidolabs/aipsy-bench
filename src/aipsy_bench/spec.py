@@ -170,7 +170,7 @@ LOCAL_JUDGE_GGUF = "gguf/aipsy-judge-1.0-q8.gguf"     # the servable Q8_0 blob i
 LOCAL_JUDGE_MODELFILE = "gguf/Modelfile"             # the Ollama serving recipe in the HF repo
 # Public naming canon (2026-07-04, .specs/HF-MODEL-RELEASE.md): functional `aipsy-judge`, version
 # in the repo name (one frozen repo per version); version = comparability (MAJOR breaks the local
-# lane, MINOR preserves it). Internal training lineage (ft-v3 / 015→016) is card provenance only.
+# lane, MINOR preserves it). Internal training lineage is card provenance only, not the public identity.
 # Serving quant is REQUIRED to be Q8_0: the FT's sharp low-loss weights truncate
 # ~16% of outputs under PTQ-Q4_K_M (early-EOS mid-JSON); Q8_0 re-scores 99.7% clean
 # (STEP3 §Serving / memory ``project_ft_judge_needs_q8_serving``).
