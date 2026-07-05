@@ -13,6 +13,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.3] — 2026-07-05
+
+Patch — DX only. **`data_version`: v1 (unchanged)**; no frozen-content or judge-instrument change,
+so scores stay fully comparable to 0.1.2.
+
 ### Fixed
 - `doctor` no longer exits non-zero — reading as a red "failure" in the terminal — when the
   **default** local judge isn't set up but the target is healthy and a usable lane exists (an API
@@ -57,5 +64,6 @@ diagnostics, the hidden-and-saved key prompt, VRAM detection, and more). Never p
 
 <!-- Release process: work accrues under [Unreleased]; on publish, rename it to the version +
      date and add compare/tag links below. -->
-[Unreleased]: https://github.com/keidolabs/aipsy-bench/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/keidolabs/aipsy-bench/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.3
 [0.1.2]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.2
