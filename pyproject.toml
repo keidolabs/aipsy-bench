@@ -22,6 +22,10 @@ classifiers = [
 dependencies = [
     "inspect-ai>=0.3.235",
     "httpx",              # async local-judge transport (also an inspect-ai dep; declared as we import it)
+    "huggingface-hub>=0.20",   # `judge pull` for the default offline local judge
+    "openai",                  # OpenAI frontier judge · openai/* & ollama/<model> targets
+    "anthropic",               # Anthropic frontier judge · claude-* targets
+    "google-genai",            # Google frontier judge · gemini-* targets
     "pydantic>=2",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
@@ -35,14 +39,10 @@ Homepage = "https://www.keidolabs.com"
 Repository = "https://github.com/keidolabs/aipsy-bench"
 Changelog = "https://github.com/keidolabs/aipsy-bench/blob/main/CHANGELOG.md"
 
-[project.optional-dependencies]
-openai = ["openai"]
-anthropic = ["anthropic"]
-google = ["google-genai"]
-# `local` covers a fully-local run: `huggingface-hub` for `judge pull`, plus the `openai`
-# client which Inspect uses to drive a local `ollama/<model>` TARGET. (The local JUDGE itself
-# is stdlib — native Ollama /api/chat — and needs no extra; the openai client is for the target.)
-local = ["huggingface-hub>=0.20", "openai"]
+# No optional-dependencies: everything ships in the base install — one `uv tool install aipsy-bench`
+# (or `pip install aipsy-bench`) gets the local judge + all frontier providers. The ~27 GB judge
+# MODEL is a separate `judge pull` via Ollama (not a pip dep); `doctor`/`init` check hardware + which
+# API keys are present and steer you to the right lane at runtime.
 
 [build-system]
 requires = ["hatchling"]

@@ -616,10 +616,10 @@ def _doctor_target_section(args: argparse.Namespace, cfg, ref, http_url, is_mock
     if chk["level"] == "error":
         return False
     provider = ref.split("/", 1)[0]
-    if provider == "ollama":  # Inspect drives ollama via its openai client — no key
+    if provider == "ollama":  # Inspect drives ollama via its openai client (a base dep) — no key
         sdk_ok = _sdk_installed("openai")
         print(f"    ollama target: openai client lib "
-              f"{'installed' if sdk_ok else 'MISSING (uv sync --extra local)'} — no key needed; "
+              f"{'installed' if sdk_ok else 'MISSING — reinstall aipsy-bench'} — no key needed; "
               "ensure `ollama serve` is running")
         return sdk_ok
     return _print_role_key(provider)

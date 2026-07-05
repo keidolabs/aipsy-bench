@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🛡️ aipsy-bench
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/keidolabs-logo-dark.svg">
+  <img alt="Keido Labs" src="assets/keidolabs-logo.svg" width="190">
+</picture>
+
+# aipsy-bench
 
 **Open-source psychological-safety benchmark for conversational AI**
 
@@ -41,55 +46,47 @@ Solver, and a Scorer, not a new runner.
 > cite these as validated agreement. When it lands, the directional reading *upgrades* to
 > validated authority.
 
+## Prerequisites
+
+1. **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — gives you `uvx` (run with
+   zero install). *(Prefer `pip`? You only need Python 3.12+.)*
+2. **One way to score transcripts** — pick either:
+   - 🖥️ **[Ollama](https://ollama.com/download)** — runs the **default local judge**, 100% offline,
+     no API key (needs a **48 GB+ Mac** or a **16 GB-VRAM + 64 GB-RAM Linux box**).
+   - 🔑 **A provider API key** — **OpenAI**, **Anthropic**, or **Google** — for the frontier judge
+     lane (`--judges gold`/`single`; your key, your cost).
+
 ## Quickstart
 
+**Try it — nothing to install** (offline self-test: mock bot + mock judges):
+
 ```bash
-uv sync
-
-# Fully offline self-test — no API keys, mock target + mock judges:
-uv run aipsy-bench run --target mock --quick
-
-# Set up the LOCAL judge (the default): a fine-tuned model served by Ollama, so the whole
-# benchmark runs 100% locally — no API key, no network. Needs only Ollama running.
-uv sync --extra local
-uv run aipsy-bench judge pull          # downloads the GGUF from HF (public, no token), registers the Ollama tag
-uv run aipsy-bench judge status        # verify Ollama + the model are ready
-
-# Run any target, judged locally (free). Only the TARGET may need a key:
-uv run aipsy-bench run --model anthropic/claude-sonnet-4-6 --quick
-
-# Benchmark YOUR OWN app: add a stateless /eval endpoint, point the CLI at it (no Python).
-# With your dev server up (npm run dev / uvicorn) + the local judge, this is 100% offline.
-uv run aipsy-bench init --http-target http://localhost:3000/eval   # scaffold aipsy-bench.yaml
-uv run aipsy-bench doctor                                          # preflight + probe the endpoint
-uv run aipsy-bench run --judges local --quick                      # the URL is yours; --header if gated
-# → full recipe (endpoint snippets, agent-built option, pre-release loop): docs/adapters/
-
-# Browse the public benchmark content:
-uv run aipsy-bench scenarios list
+uvx aipsy-bench run --target mock --quick
 ```
 
-> **Benchmarking your own app?** See the [adapter guides](docs/adapters/README.md): a stateless
-> `/eval` endpoint (localhost-first, fully offline) you write by hand
-> ([cookbook](docs/adapters/eval-endpoint.md)) or have a
-> [coding agent build](docs/adapters/eval-endpoint-agent-guide.md), plus a Tier-2 Python
-> [callable](docs/adapters/callable.md) for apps that must own auth / sessions / SSE.
+**Install once — then it's just `aipsy-bench …`** (no per-command prefixes):
 
-> **Prefer the frontier judges** (the official/citable `gold` lane) instead of the local
-> default? That's an alternative lane — install the provider SDKs + keys
-> (`uv sync --all-extras`) and add `--judges gold`. See [API keys](#api-keys-your-keys-your-cost).
+```bash
+uv tool install aipsy-bench             # one install — local judge + every provider, no extras to pick
+aipsy-bench judge pull                  # one-time: fetch the local judge (needs Ollama)
+aipsy-bench init --http-target http://localhost:3000/eval   # scaffold config for your bot
+aipsy-bench run --quick                 # go
+```
 
-> **The local judge is a different instrument than the frontier gold panel.** A local score
-> is comparable to other local runs only, never to gold — the two are separate lanes. See
-> [docs/local-judge.md](docs/local-judge.md) for setup, hardware requirements, and the
-> directional positioning.
->
-> **Hardware:** the Q8_0 model is ~27 GB resident. Recommended: a **48 GB+ unified-memory Mac**,
-> or a **Linux box with ≥16 GB VRAM + ≥64 GB RAM** (discrete-GPU offload). A 32–36 GB Mac works
-> but is slow (~5 min/turn) and needs the Metal wired-limit raised — see the docs.
+> **Frontier judges** instead of the local default? Nothing extra to install — set your provider key
+> (`aipsy-bench keys set`, stored in a gitignored `.env`) and pass `--judges single` (or `gold`).
+> Prefer classic pip? `pip install aipsy-bench` is identical.
 
-Each run writes `result.json` (citable, self-describing), `report.txt` (human-readable, with
-the remediation cards), and a share `card.svg`/`card.png` + `badge.svg` (skip with `--no-card`).
+Each run writes `result.json` (citable), `report.txt` (with the remediation cards), and a share
+`card.svg`/`card.png` + `badge.svg` (skip with `--no-card`).
+
+> **Benchmarking your own app?** The only integration you write is a thin, stateless `/eval`
+> endpoint — see the [adapter guides](docs/adapters/README.md): a hand-written cookbook, an
+> [AI-agent build prompt](docs/adapters/eval-endpoint-agent-guide.md), or a Tier-2 callable.
+
+> **Which judge?** The **local** judge is the offline default; **frontier** (`--judges gold`/`single`,
+> provider keys) is a *different instrument* — a local score compares to other local runs only,
+> never to gold. Setup + hardware: [docs/local-judge.md](docs/local-judge.md).
 
 ### Run profiles
 
