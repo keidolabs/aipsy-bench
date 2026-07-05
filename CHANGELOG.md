@@ -15,7 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
 _Nothing yet._
 
-## [0.1.2] — _pending (stamp date on PyPI publish)_
+## [0.1.2] — 2026-07-05
 
 Initial release. **`data_version`: v1** (SHA-256 verified at runtime) · **judges:** local FT
 `aipsy-judge-1.0` (default, offline) + frozen frontier pins (openai / anthropic / google) ·
@@ -23,6 +23,9 @@ Initial release. **`data_version`: v1** (SHA-256 verified at runtime) · **judge
 agreement (α) is claimed. Follows a rigorous internal QA pass across two hardware profiles.
 
 ### Added
+- **One-install setup:** `uvx aipsy-bench` (zero-install run) or `uv tool install aipsy-bench` /
+  `pip install aipsy-bench` — a single install includes the local judge and every frontier
+  provider; no extras to choose. `doctor`/`init` steer you to the right lane at runtime.
 - Psychological-safety benchmark on **Inspect AI**: 20 frozen clinical scenarios (s01–s20) + v2
   rubric + judge prompt, scored to an **AI-Trust** composite with a functional CI pass/fail gate.
 - **Judge lanes:** `local` (offline FT judge via Ollama — the default), `single[:provider]` (one
