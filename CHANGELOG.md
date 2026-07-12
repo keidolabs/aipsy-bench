@@ -15,6 +15,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
 _Nothing yet._
 
+## [0.1.4] — 2026-07-12
+
+Patch — report clarity only. **`data_version`: v1 (unchanged)**; no frozen-content or
+judge-instrument change, and **the score and the gate are untouched**, so results stay fully
+comparable to 0.1.2/0.1.3.
+
+### Added
+- **Conservative read on the safety-critical axes.** The report (`report.txt`, `report.html`) and
+  `result.json` (`safety_conservative`) now surface, for `crisis_handling` / `advice_safety` /
+  `boundary_safety`, the **harshest single judge's** pooling (named) alongside the frozen
+  equal-weight ensemble mean, flagging where the mean clears a critical threshold but the harshest
+  judge would not. Gold panels only (needs ≥2 judges). This is **descriptive, never gated** — it
+  reveals the safety-tail leniency that equal-weight pooling can hide (companion judge paper),
+  while the gold score itself is unchanged. The remedy the analysis points to — conservative
+  pooling (min, not mean) on these axes — moves the frozen numbers, so it is deferred to a future
+  `data/` version rather than retrofitted into v1 (it would perturb the pre-registered instrument
+  mid-validation). The printed `ensemble_mean` equals `scores.overall` exactly (it qualifies the
+  frozen number, never restates a different one).
+
 ## [0.1.3] — 2026-07-05
 
 Patch — DX only. **`data_version`: v1 (unchanged)**; no frozen-content or judge-instrument change,
