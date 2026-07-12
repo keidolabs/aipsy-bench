@@ -162,6 +162,7 @@ def to_result_json(
 
     target_block = _target_block(log, target)
     disagreement = trust.judge_disagreement(samples)
+    safety_conservative = trust.conservative_safety_read(samples)
     self_pref = trust.self_preference(target_block["ref"], judge_versions)
     # "Self-judging" = EVERY judge shares the target's family (the single:<p> + <p>-target
     # case) — a stronger confound than gold's 1-of-3 partial overlap. Alert prominently with
@@ -207,6 +208,7 @@ def to_result_json(
         "run_failures": run_failures,
         "judge_failures": judge_failures,
         "judge_disagreement": disagreement,
+        "safety_conservative": safety_conservative,
         "self_preference": self_pref,
         "self_judging": self_judging,
         "warnings": warnings,
@@ -293,6 +295,22 @@ def render_report(result_json: dict) -> str:
     for k in _NUMERIC_KEYS:
         lines.append(f"  {k:<22} {_fmt(overall.get(k))}")
     lines.append("")
+
+    sc = result_json.get("safety_conservative")
+    if sc:
+        lines.append("Conservative read (harshest judge · safety axes — descriptive, NOT gated):")
+        for r in sc:
+            if r["harshest_judge"] is None:
+                lines.append(f"  {r['metric']:<20} mean {_fmt(r['ensemble_mean'])} · harshest N/A")
+                continue
+            line = (f"  {r['metric']:<20} mean {_fmt(r['ensemble_mean'])} · "
+                    f"harshest {_fmt(r['harshest_value'])} ({r['harshest_judge']})")
+            if r["would_flag"]:
+                line += f"  ⚠ mean passes, harshest would flag (<{r['critical']:g})"
+            lines.append(line)
+        lines.append("  equal-weight pooling can under-flag the safety tail; conservative pooling "
+                     "(min, not mean) is deferred to a future data version (§0.3).")
+        lines.append("")
 
     if result_json.get("run_failures"):
         rfs = result_json["run_failures"]
@@ -512,6 +530,40 @@ def _scenario_details(result_json: dict) -> str:
     return "\n".join(out)
 
 
+def _conservative_html(result_json: dict) -> str:
+    """Descriptive harshest-judge read on the safety-critical axes (§0.3). Empty for
+    single/local panels (nothing to pool). Never gated — a qualifier on the mean."""
+    sc = result_json.get("safety_conservative")
+    if not sc:
+        return ""
+    rows = []
+    for r in sc:
+        label = _METRIC_SHORT.get(r["metric"], r["metric"])
+        if r["harshest_judge"] is None:
+            rows.append(f'<li><span class="mono">{_h(label)}</span> — mean '
+                        f'{_h(_fmt(r["ensemble_mean"]))} · harshest N/A</li>')
+            continue
+        flag = ""
+        if r["would_flag"]:
+            crit = f"{r['critical']:g}"
+            flag = (f' <span class="chip bad">⚠ mean passes · harshest would flag '
+                    f'(&lt;{_h(crit)})</span>')
+        rows.append(
+            f'<li><span class="mono">{_h(label)}</span> — mean '
+            f'<b>{_h(_fmt(r["ensemble_mean"]))}</b> · harshest '
+            f'<b class="at {_band(r["harshest_value"])}">{_h(_fmt(r["harshest_value"]))}</b> '
+            f'({_h(r["harshest_judge"])}){flag}</li>'
+        )
+    return (
+        "<h2>Conservative read · safety axes</h2>"
+        '<p class="sub">Harshest single judge vs the equal-weight ensemble mean on the '
+        "safety-critical axes — <b>descriptive, not gated</b>. Equal-weight pooling can "
+        "under-flag the safety tail; conservative pooling (min, not mean) is deferred to a "
+        "future data version (§0.3).</p>"
+        f'<ul class="warns">{"".join(rows)}</ul>'
+    )
+
+
 def render_html(result_json: dict) -> str:
     """Render the result.json as a self-contained, offline HTML report (§4.3).
 
@@ -590,6 +642,8 @@ def render_html(result_json: dict) -> str:
 
     parts.append("<h2>Overall scores</h2>")
     parts.append("".join(_bar_row(m, overall.get(m)) for m in spec.METRICS))
+
+    parts.append(_conservative_html(result_json))
 
     parts.append("<h2>Scenarios</h2>")
     parts.append(_scenario_details(result_json))

@@ -73,6 +73,17 @@ SITUATIONAL_METRICS = (
     "boundary_safety",
     "affective_complexity",
 )
+# The safety-critical axes — where equal-weight judge pooling is most lenient on the
+# failure tail (companion judge paper). The gold score means the frontier judges by
+# equal weight (§6.1); on these three the mean can blend a lenient outlier judge's
+# leniency in, so the report surfaces a descriptive *harshest-judge* read here
+# (trust.conservative_safety_read). Conservative pooling itself (min, not mean) is a
+# score-meaning change ⇒ deferred to a future data version, not retrofitted into v1.
+SAFETY_CRITICAL_METRICS = (
+    "crisis_handling",
+    "advice_safety",
+    "boundary_safety",
+)
 
 # --------------------------------------------------------------------------
 # Judges — 014 prereg §3. Three frontier models, fully crossed generator×judge.
