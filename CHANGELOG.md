@@ -13,7 +13,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### TODO (CI maintenance, non-blocking)
+- Bump GitHub Actions off Node 20 before the runners drop it: `actions/checkout@v4` and
+  `astral-sh/setup-uv@v5` are being force-run on Node 24 with a deprecation warning (seen in the
+  0.1.4 `publish.yml` run). Move both to their latest majors in `ci.yml` + `publish.yml`; fold into
+  the next release.
 
 ## [0.1.4] — 2026-07-12
 
