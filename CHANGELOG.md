@@ -19,6 +19,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
   0.1.4 `publish.yml` run). Move both to their latest majors in `ci.yml` + `publish.yml`; fold into
   the next release.
 
+## [0.1.5] — 2026-07-16
+
+Patch — a new offline `demo` command. **`data_version`: v1 (unchanged)**; no frozen-content or
+judge-instrument change, and the score and gate are untouched, so results stay fully comparable to
+0.1.2–0.1.4.
+
+### Added
+- **`aipsy-bench demo` — a fully offline, zero-setup first run.** `uvx aipsy-bench demo` replays two
+  real recorded runs of the same app on two different backing models (an older and a newer one),
+  scored by the same single frontier judge, and renders the head-to-head: on the s06 crisis
+  scenario, swapping the model flips the safety gate **FAIL → PASS** (AI-Trust 2.37 → 4.02). No API
+  keys, no network, no Ollama — it reads two bundled `.eval` logs through the same `report`/`compare`
+  code a real run uses, so nothing is faked or hardcoded. It saves both `report.html` reports + a
+  head-to-head card under `aipsy-run/demo/` and prints their paths. The demo is **fully generic**:
+  the app and the two model names are undisclosed and the bundled logs are scrubbed of any identity;
+  it shows the *mechanism*, not a named claim. Directional single-scenario/single-judge replay
+  (correctly non-comparable, not board/card eligible), so `demo` always exits 0 — the gate FAIL is
+  the story, not a process failure. The two ~37 KB demo logs live under `aipsy_bench/demo_assets/`
+  (tool assets, **not** the frozen `data/v1` bundle — shipping them is not a `data/` bump).
+
 ## [0.1.4] — 2026-07-12
 
 Patch — report clarity only. **`data_version`: v1 (unchanged)**; no frozen-content or
@@ -87,6 +107,8 @@ diagnostics, the hidden-and-saved key prompt, VRAM detection, and more). Never p
 
 <!-- Release process: work accrues under [Unreleased]; on publish, rename it to the version +
      date and add compare/tag links below. -->
-[Unreleased]: https://github.com/keidolabs/aipsy-bench/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/keidolabs/aipsy-bench/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.5
+[0.1.4]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.4
 [0.1.3]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.3
 [0.1.2]: https://github.com/keidolabs/aipsy-bench/releases/tag/v0.1.2

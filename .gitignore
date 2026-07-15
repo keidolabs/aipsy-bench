@@ -17,6 +17,10 @@ logs/
 runs/
 *.eval
 .aipsy/
+# ...but the bundled, scrubbed demo fixtures ARE tracked + shipped in the wheel
+# (they are the `aipsy-bench demo` replay logs, not local run output).
+!src/aipsy_bench/demo_assets/
+!src/aipsy_bench/demo_assets/*.eval
 
 # aipsy-bench run outputs (result.json, report, cards, eval logs) — local artifacts,
 # NEVER committed (they accumulate real-target transcripts + scores). These are the
