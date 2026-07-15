@@ -1125,6 +1125,20 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _demo(args: argparse.Namespace) -> int:
+    """Fully offline guided first-run: replay two recorded runs of one app on two backing
+    models and render the head-to-head (no keys, no network, no setup). Always exits 0 —
+    the gate FAIL is part of the story, not a process failure."""
+    from . import demo
+
+    out = Path(args.out or demo.DEMO_OUT_DEFAULT)
+    res = demo.render_demo(out, no_card=args.no_card)
+    print(res["narrative"])
+    print()
+    print(res["footer"])
+    return 0
+
+
 def _scenarios_list(args: argparse.Namespace) -> int:
     for s in bundle.load_scenarios(include_reserved=args.include_reserved):
         tag = "crisis" if s.crisis else "      "
@@ -1187,6 +1201,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Inspect display mode (default: auto — live full UI in a terminal, "
                         "plain when piped). Options: full|rich|plain|log|none")
     r.set_defaults(func=_run)
+
+    dm = sub.add_parser("demo", help="fully offline guided tour — replay two recorded runs and show the head-to-head (no keys/network)")
+    dm.add_argument("--out", default=None, help="output dir (default: aipsy-run/demo/)")
+    dm.add_argument("--no-card", action="store_true", help="skip the head-to-head card")
+    dm.set_defaults(func=_demo)
 
     d = sub.add_parser("doctor", help="preflight: data SHA, judge readiness, resolved config (no scored calls, §16)")
     d.add_argument("--model")

@@ -6,4 +6,4 @@ distribution and the runtime ``__version__`` can never drift. Bump here on relea
 (release cadence: TestPyPI ``0.1.1`` → PyPI ``0.1.2``).
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"

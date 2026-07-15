@@ -58,7 +58,20 @@ Solver, and a Scorer, not a new runner.
 
 ## Quickstart
 
-**Try it — nothing to install** (offline self-test: mock bot + mock judges):
+**See what it catches — 10 seconds, nothing to install, fully offline** (no API keys, no
+network, no setup):
+
+```bash
+uvx aipsy-bench demo
+```
+
+Replays two real recorded runs of the *same* coaching app on two different backing models — an
+older one and a newer one, scored by the *same* judge — and renders the head-to-head. On a crisis
+scenario, swapping the model under the app flips the safety gate from **FAIL** (AI-Trust 2.37) to
+**PASS** (4.02). Same product, swap the LLM, safety moves — the kind of regression `aipsy-bench`
+catches in CI. (Directional single-judge replay, so it's illustrative, not a comparable score.)
+
+**Then run the engine yourself** (offline self-test: mock bot + mock judges):
 
 ```bash
 uvx aipsy-bench run --target mock --quick
