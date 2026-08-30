@@ -1,0 +1,7 @@
+# aipsy-bench project config — committed & team-shareable. CLI flags override these.
+# docs: docs/adapters/eval-endpoint.md
+
+target:
+  http: http://localhost:3000/api/ai-coach/eval
+  conversation: stateless
+judges: local
